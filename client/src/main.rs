@@ -1,10 +1,12 @@
-use usb_bridge_protocol::SelectionRequest;
+mod api;
+mod cli;
+mod config;
+mod error;
+mod usbip;
 
 fn main() {
-    let selection = SelectionRequest::default();
-    println!(
-        "USB Bridge Windows client scaffold ({} selected devices)",
-        selection.devices.len()
-    );
-    println!("Server API and usbip-win2 integration are not implemented yet.");
+    if let Err(error) = cli::run() {
+        eprintln!("error: {error}");
+        std::process::exit(1);
+    }
 }

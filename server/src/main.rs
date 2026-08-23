@@ -9,17 +9,17 @@ use std::{
 };
 
 use axum::{
+    Json, Router,
     extract::State,
     http::StatusCode,
     response::{Html, IntoResponse},
     routing::{get, post},
-    Json, Router,
 };
 use tokio::{net::TcpListener, sync::RwLock};
 use tracing::{info, warn};
 use usb_bridge_protocol::{
-    AcquireRequest, ErrorResponse, SelectionRequest, SelectionResponse, Session, SessionResponse,
-    UsbDevice,
+    AcquireRequest, ErrorResponse, HealthResponse, ReleaseRequest, SelectionRequest,
+    SelectionResponse, Session, SessionResponse, UsbDevice,
 };
 
 const INDEX_HTML: &str = include_str!("../web/index.html");
@@ -31,12 +31,6 @@ struct AppState {
     selection_file: PathBuf,
     selected: Arc<RwLock<BTreeSet<String>>>,
     session: Arc<RwLock<Option<Session>>>,
-}
-
-#[derive(Clone, serde::Serialize)]
-struct Health {
-    status: &'static str,
-    backend: String,
 }
 
 #[tokio::main]
@@ -108,12 +102,16 @@ fn run_healthcheck() {
         .unwrap_or_else(|error| panic!("invalid HEALTHCHECK_ADDRESS {address:?}: {error}"));
     let mut stream = TcpStream::connect_timeout(&socket_address, timeout)
         .unwrap_or_else(|error| panic!("healthcheck connection failed: {error}"));
-    stream.set_read_timeout(Some(timeout)).expect("failed to set timeout");
+    stream
+        .set_read_timeout(Some(timeout))
+        .expect("failed to set timeout");
     stream
         .write_all(b"GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
         .expect("healthcheck request failed");
     let mut response = String::new();
-    stream.read_to_string(&mut response).expect("healthcheck response failed");
+    stream
+        .read_to_string(&mut response)
+        .expect("healthcheck response failed");
     if !response.starts_with("HTTP/1.1 200") {
         panic!("healthcheck returned an unhealthy response");
     }
@@ -123,15 +121,22 @@ async fn index() -> Html<&'static str> {
     Html(INDEX_HTML)
 }
 
-async fn health(State(state): State<AppState>) -> Json<Health> {
-    Json(Health { status: "ok", backend: state.backend })
+async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
+    Json(HealthResponse {
+        status: "ok".to_owned(),
+        backend: state.backend,
+    })
 }
 
 async fn devices(State(state): State<AppState>) -> impl IntoResponse {
     let selected = state.selected.read().await.clone();
     match enumerate_devices(&state, &selected) {
         Ok(devices) => Json(devices).into_response(),
-        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error })).into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error }),
+        )
+            .into_response(),
     }
 }
 
@@ -143,7 +148,11 @@ async fn save_selection(
     let available = match enumerate_devices(&state, &current) {
         Ok(devices) => devices,
         Err(error) => {
-            return (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error })).into_response();
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error }),
+            )
+                .into_response();
         }
     };
     let selectable: BTreeSet<_> = available
@@ -151,7 +160,11 @@ async fn save_selection(
         .filter(|device| device.selectable)
         .map(|device| device.bus_id.as_str())
         .collect();
-    if request.devices.iter().any(|device| !selectable.contains(device.as_str())) {
+    if request
+        .devices
+        .iter()
+        .any(|device| !selectable.contains(device.as_str()))
+    {
         return (
             StatusCode::BAD_REQUEST,
             Json(ErrorResponse {
@@ -163,14 +176,23 @@ async fn save_selection(
 
     let selected: BTreeSet<String> = request.devices.into_iter().collect();
     if let Err(error) = persist_selection(&state.selection_file, &selected) {
-        return (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error })).into_response();
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error }),
+        )
+            .into_response();
     }
     *state.selected.write().await = selected.clone();
-    Json(SelectionResponse { devices: selected.into_iter().collect() }).into_response()
+    Json(SelectionResponse {
+        devices: selected.into_iter().collect(),
+    })
+    .into_response()
 }
 
 async fn get_session(State(state): State<AppState>) -> Json<SessionResponse> {
-    Json(SessionResponse { session: state.session.read().await.clone() })
+    Json(SessionResponse {
+        session: state.session.read().await.clone(),
+    })
 }
 
 async fn acquire(
@@ -180,7 +202,9 @@ async fn acquire(
     if request.client_id.trim().is_empty() {
         return (
             StatusCode::BAD_REQUEST,
-            Json(ErrorResponse { error: "client_id must not be empty".to_owned() }),
+            Json(ErrorResponse {
+                error: "client_id must not be empty".to_owned(),
+            }),
         )
             .into_response();
     }
@@ -188,7 +212,9 @@ async fn acquire(
     if current.is_some() {
         return (
             StatusCode::CONFLICT,
-            Json(ErrorResponse { error: "USB devices are already acquired".to_owned() }),
+            Json(ErrorResponse {
+                error: "USB devices are already acquired".to_owned(),
+            }),
         )
             .into_response();
     }
@@ -197,22 +223,47 @@ async fn acquire(
     } else {
         request.devices
     };
-    let session = Session { client_id: request.client_id, devices };
+    let session = Session {
+        client_id: request.client_id,
+        devices,
+    };
     *current = Some(session.clone());
     (StatusCode::CREATED, Json(session)).into_response()
 }
 
-async fn release(State(state): State<AppState>) -> StatusCode {
-    *state.session.write().await = None;
-    StatusCode::NO_CONTENT
+async fn release(
+    State(state): State<AppState>,
+    Json(request): Json<ReleaseRequest>,
+) -> impl IntoResponse {
+    let mut current = state.session.write().await;
+    match current.as_ref() {
+        Some(session) if session.client_id == request.client_id => {
+            *current = None;
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Some(_) => (
+            StatusCode::CONFLICT,
+            Json(ErrorResponse {
+                error: "session is owned by another client".to_owned(),
+            }),
+        )
+            .into_response(),
+        None => StatusCode::NO_CONTENT.into_response(),
+    }
 }
 
-fn enumerate_devices(state: &AppState, selected: &BTreeSet<String>) -> Result<Vec<UsbDevice>, String> {
+fn enumerate_devices(
+    state: &AppState,
+    selected: &BTreeSet<String>,
+) -> Result<Vec<UsbDevice>, String> {
     if state.backend == "mock" {
         return Ok(mock_devices(selected));
     }
     let entries = fs::read_dir(&state.sysfs_root).map_err(|error| {
-        format!("failed to read USB sysfs at {}: {error}", state.sysfs_root.display())
+        format!(
+            "failed to read USB sysfs at {}: {error}",
+            state.sysfs_root.display()
+        )
     })?;
     let mut devices = Vec::new();
     for entry in entries.flatten() {
@@ -246,7 +297,7 @@ fn enumerate_devices(state: &AppState, selected: &BTreeSet<String>) -> Result<Ve
             drivers,
         });
     }
-    devices.sort_by(|left, right| natural_bus_key(&left.bus_id).cmp(&natural_bus_key(&right.bus_id)));
+    devices.sort_by_key(|device| natural_bus_key(&device.bus_id));
     Ok(devices)
 }
 
@@ -258,7 +309,9 @@ fn read_attribute(path: &Path, attribute: &str) -> Option<String> {
 }
 
 fn interface_attributes(root: &Path, bus_id: &str, attribute: &str) -> Vec<String> {
-    let Ok(entries) = fs::read_dir(root) else { return Vec::new() };
+    let Ok(entries) = fs::read_dir(root) else {
+        return Vec::new();
+    };
     let prefix = format!("{bus_id}:");
     let values: BTreeSet<String> = entries
         .flatten()
@@ -269,13 +322,19 @@ fn interface_attributes(root: &Path, bus_id: &str, attribute: &str) -> Vec<Strin
 }
 
 fn interface_drivers(root: &Path, bus_id: &str) -> Vec<String> {
-    let Ok(entries) = fs::read_dir(root) else { return Vec::new() };
+    let Ok(entries) = fs::read_dir(root) else {
+        return Vec::new();
+    };
     let prefix = format!("{bus_id}:");
     let drivers: BTreeSet<String> = entries
         .flatten()
         .filter(|entry| entry.file_name().to_string_lossy().starts_with(&prefix))
         .filter_map(|entry| fs::read_link(entry.path().join("driver")).ok())
-        .filter_map(|driver| driver.file_name().map(|name| name.to_string_lossy().into_owned()))
+        .filter_map(|driver| {
+            driver
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        })
         .collect();
     drivers.into_iter().collect()
 }
@@ -285,17 +344,32 @@ fn classify_device(
     drivers: &[String],
 ) -> (bool, &'static str, Option<&'static str>) {
     if interface_classes.iter().any(|class| class == "08") {
-        return (true, "caution", Some("ストレージを転送するとPi側から切断されます"));
+        return (
+            true,
+            "caution",
+            Some("ストレージを転送するとPi側から切断されます"),
+        );
     }
     if !drivers.iter().any(|driver| driver == "cdc_acm")
         && interface_classes
             .iter()
             .any(|class| matches!(class.as_str(), "02" | "0a" | "e0"))
     {
-        return (true, "caution", Some("ネットワーク機器の場合、Piとの接続を失う可能性があります"));
+        return (
+            true,
+            "caution",
+            Some("ネットワーク機器の場合、Piとの接続を失う可能性があります"),
+        );
     }
-    if interface_classes.iter().any(|class| matches!(class.as_str(), "01" | "0e")) {
-        return (true, "caution", Some("オーディオ・映像機器は帯域を多く使用する場合があります"));
+    if interface_classes
+        .iter()
+        .any(|class| matches!(class.as_str(), "01" | "0e"))
+    {
+        return (
+            true,
+            "caution",
+            Some("オーディオ・映像機器は帯域を多く使用する場合があります"),
+        );
     }
     (true, "normal", None)
 }
@@ -307,11 +381,16 @@ fn parent_usb_path(bus_id: &str) -> Option<String> {
 }
 
 fn natural_bus_key(bus_id: &str) -> Vec<u32> {
-    bus_id.split(['-', '.']).filter_map(|part| part.parse::<u32>().ok()).collect()
+    bus_id
+        .split(['-', '.'])
+        .filter_map(|part| part.parse::<u32>().ok())
+        .collect()
 }
 
 fn load_selection(path: &Path) -> BTreeSet<String> {
-    let Ok(contents) = fs::read_to_string(path) else { return BTreeSet::new() };
+    let Ok(contents) = fs::read_to_string(path) else {
+        return BTreeSet::new();
+    };
     match serde_json::from_str::<SelectionRequest>(&contents) {
         Ok(selection) => selection.devices.into_iter().collect(),
         Err(error) => {
@@ -326,7 +405,9 @@ fn persist_selection(path: &Path, selected: &BTreeSet<String>) -> Result<(), Str
         fs::create_dir_all(parent)
             .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
     }
-    let payload = SelectionRequest { devices: selected.iter().cloned().collect() };
+    let payload = SelectionRequest {
+        devices: selected.iter().cloned().collect(),
+    };
     let contents = serde_json::to_string_pretty(&payload)
         .map_err(|error| format!("failed to serialize selection: {error}"))?;
     fs::write(path, format!("{contents}\n"))
@@ -342,28 +423,34 @@ fn mock_devices(selected: &BTreeSet<String>) -> Vec<UsbDevice> {
         ("1-1.5", "1234", "0002", "USB Mouse", "03"),
     ]
     .into_iter()
-    .map(|(bus_id, vendor_id, product_id, product, class)| UsbDevice {
-        bus_id: bus_id.to_owned(),
-        vendor_id: vendor_id.to_owned(),
-        product_id: product_id.to_owned(),
-        manufacturer: Some("Mock Device".to_owned()),
-        product: Some(product.to_owned()),
-        serial_number: None,
-        device_class: "00".to_owned(),
-        interface_classes: vec![class.to_owned()],
-        drivers: vec![if class == "03" { "usbhid" } else { "cdc_acm" }.to_owned()],
-        parent_hub: parent_usb_path(bus_id),
-        selected: selected.contains(bus_id),
-        selectable: true,
-        risk: "normal".to_owned(),
-        warning: None,
-        status: "available".to_owned(),
-    })
+    .map(
+        |(bus_id, vendor_id, product_id, product, class)| UsbDevice {
+            bus_id: bus_id.to_owned(),
+            vendor_id: vendor_id.to_owned(),
+            product_id: product_id.to_owned(),
+            manufacturer: Some("Mock Device".to_owned()),
+            product: Some(product.to_owned()),
+            serial_number: None,
+            device_class: "00".to_owned(),
+            interface_classes: vec![class.to_owned()],
+            drivers: vec![if class == "03" { "usbhid" } else { "cdc_acm" }.to_owned()],
+            parent_hub: parent_usb_path(bus_id),
+            selected: selected.contains(bus_id),
+            selectable: true,
+            risk: "normal".to_owned(),
+            warning: None,
+            status: "available".to_owned(),
+        },
+    )
     .collect()
 }
 
 async fn shutdown_signal() {
-    let ctrl_c = async { tokio::signal::ctrl_c().await.expect("failed to install Ctrl+C handler") };
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler")
+    };
     #[cfg(unix)]
     let terminate = async {
         tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())

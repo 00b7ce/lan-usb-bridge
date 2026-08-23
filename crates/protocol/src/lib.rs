@@ -1,6 +1,12 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct HealthResponse {
+    pub status: String,
+    pub backend: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct UsbDevice {
     pub bus_id: String,
     pub vendor_id: String,
@@ -30,6 +36,11 @@ pub struct AcquireRequest {
     pub client_id: String,
     #[serde(default)]
     pub devices: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ReleaseRequest {
+    pub client_id: String,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
