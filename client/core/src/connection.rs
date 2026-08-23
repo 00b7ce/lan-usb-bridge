@@ -86,20 +86,36 @@ where
             );
             return Err(error);
         }
-        if !usbip.is_dry_run() && !wait_for_port(usbip, &device.bus_id, cancelled)? {
-            rollback(
-                &api,
-                usbip,
-                host,
-                &config.client_id,
-                &attached,
-                Some(&device.bus_id),
-            );
-            return if is_ftdi(device) {
-                Err(ClientError::FtdiCompatibility(device.bus_id.clone()))
-            } else {
-                Err(ClientError::UsbipPortNotFound(device.bus_id.clone()))
-            };
+        if !usbip.is_dry_run() {
+            match wait_for_port(usbip, &device.bus_id, cancelled) {
+                Ok(true) => {}
+                Ok(false) => {
+                    rollback(
+                        &api,
+                        usbip,
+                        host,
+                        &config.client_id,
+                        &attached,
+                        Some(&device.bus_id),
+                    );
+                    return if is_ftdi(device) {
+                        Err(ClientError::FtdiCompatibility(device.bus_id.clone()))
+                    } else {
+                        Err(ClientError::UsbipPortNotFound(device.bus_id.clone()))
+                    };
+                }
+                Err(error) => {
+                    rollback(
+                        &api,
+                        usbip,
+                        host,
+                        &config.client_id,
+                        &attached,
+                        Some(&device.bus_id),
+                    );
+                    return Err(error);
+                }
+            }
         }
         attached.push(device.bus_id.clone());
     }
@@ -124,6 +140,19 @@ where
         return Err(ClientError::SessionOwnedByOther(owner.client_id.clone()));
     }
     let mut detach_errors = Vec::new();
+    let host = config
+        .server_url
+        .host_str()
+        .ok_or_else(|| ClientError::Config("サーバーURLにホストがありません".into()))?;
+    let mut stop_all_needed = false;
+    for bus_id in devices {
+        if usbip.stop_attach(host, bus_id).is_err() {
+            stop_all_needed = true;
+        }
+    }
+    if stop_all_needed {
+        let _ = usbip.stop_all();
+    }
     for bus_id in devices {
         progress(format!("{bus_id} を切断しています"));
         match usbip.detach_bus_id(bus_id) {
@@ -161,9 +190,14 @@ fn rollback(
     attached: &[String],
     failed: Option<&str>,
 ) {
-    if let Some(bus_id) = failed
-        && usbip.stop_attach(host, bus_id).is_err()
-    {
+    let mut stop_all_needed = false;
+    if let Some(bus_id) = failed {
+        stop_all_needed |= usbip.stop_attach(host, bus_id).is_err();
+    }
+    for bus_id in attached.iter().rev() {
+        stop_all_needed |= usbip.stop_attach(host, bus_id).is_err();
+    }
+    if stop_all_needed {
         let _ = usbip.stop_all();
     }
     for bus_id in attached.iter().rev() {
@@ -184,7 +218,7 @@ mod tests {
 
     struct MockUsbip {
         calls: Mutex<Vec<String>>,
-        attach_fails: bool,
+        attach_failure: Option<String>,
         stop_fails: bool,
     }
 
@@ -192,8 +226,15 @@ mod tests {
         fn new(attach_fails: bool, stop_fails: bool) -> Self {
             Self {
                 calls: Mutex::new(Vec::new()),
-                attach_fails,
+                attach_failure: attach_fails.then(|| "*".into()),
                 stop_fails,
+            }
+        }
+        fn failing_on(bus_id: &str) -> Self {
+            Self {
+                calls: Mutex::new(Vec::new()),
+                attach_failure: Some(bus_id.into()),
+                stop_fails: false,
             }
         }
         fn record(&self, value: &str) {
@@ -217,7 +258,11 @@ mod tests {
         }
         fn attach(&self, _host: &str, bus_id: &str) -> Result<CommandOutput> {
             self.record(&format!("attach:{bus_id}"));
-            if self.attach_fails {
+            if self
+                .attach_failure
+                .as_deref()
+                .is_some_and(|failed| failed == "*" || failed == bus_id)
+            {
                 Err(ClientError::UsbipFailed {
                     code: Some(1),
                     message: "failed".into(),
@@ -247,14 +292,18 @@ mod tests {
             self.record(&format!("detach:{bus_id}"));
             Err(ClientError::UsbipPortNotFound(bus_id.into()))
         }
-        fn attached_port(&self, _bus_id: &str) -> Result<Option<String>> {
-            Ok(None)
+        fn attached_port(&self, bus_id: &str) -> Result<Option<String>> {
+            Ok(Some(format!("port-{bus_id}")))
         }
     }
 
     fn device() -> UsbDevice {
+        device_with_id("1-2")
+    }
+
+    fn device_with_id(bus_id: &str) -> UsbDevice {
         UsbDevice {
-            bus_id: "1-2".into(),
+            bus_id: bus_id.into(),
             vendor_id: "1234".into(),
             product_id: "0001".into(),
             manufacturer: None,
@@ -363,6 +412,70 @@ mod tests {
                 .unwrap()
                 .iter()
                 .any(|call| call == "stop-all")
+        );
+    }
+
+    #[test]
+    fn attaches_all_three_gx6_interfaces() {
+        let (base, _) = api_server(false, 2);
+        let usbip = MockUsbip::new(false, false);
+        let devices = [
+            device_with_id("1-1.2.1"),
+            device_with_id("1-1.2.2"),
+            device_with_id("1-1.2.3"),
+        ];
+
+        connect_group(
+            &config(base),
+            &usbip,
+            &devices,
+            &AtomicBool::new(false),
+            |_| {},
+        )
+        .unwrap();
+
+        assert_eq!(
+            usbip.calls.lock().unwrap().as_slice(),
+            ["attach:1-1.2.1", "attach:1-1.2.2", "attach:1-1.2.3"]
+        );
+    }
+
+    #[test]
+    fn second_gx6_interface_failure_rolls_back_first_interface() {
+        let (base, requests) = api_server(false, 3);
+        let usbip = MockUsbip::failing_on("1-1.2.2");
+        let devices = [
+            device_with_id("1-1.2.1"),
+            device_with_id("1-1.2.2"),
+            device_with_id("1-1.2.3"),
+        ];
+
+        assert!(
+            connect_group(
+                &config(base),
+                &usbip,
+                &devices,
+                &AtomicBool::new(false),
+                |_| {},
+            )
+            .is_err()
+        );
+        assert_eq!(
+            usbip.calls.lock().unwrap().as_slice(),
+            [
+                "attach:1-1.2.1",
+                "attach:1-1.2.2",
+                "stop:1-1.2.2",
+                "stop:1-1.2.1",
+                "detach:1-1.2.1"
+            ]
+        );
+        assert!(
+            requests
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|request| request == "POST /api/release")
         );
     }
 

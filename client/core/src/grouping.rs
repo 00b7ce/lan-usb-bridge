@@ -22,7 +22,14 @@ pub fn group_devices(devices: &[UsbDevice]) -> Vec<DeviceGroup> {
         .into_iter()
         .map(|(id, mut devices)| {
             devices.sort_by(|left, right| left.bus_id.cmp(&right.bus_id));
-            let title = if devices.len() > 1 {
+            let is_gx6 = devices.len() == 3
+                && devices.iter().all(|device| {
+                    device.vendor_id.eq_ignore_ascii_case("04da")
+                        && device.product_id.eq_ignore_ascii_case("3f18")
+                });
+            let title = if is_gx6 {
+                "HaritoraX Wireless GX6（3ポート）".to_owned()
+            } else if devices.len() > 1 {
                 format!("USBハブ {id}")
             } else {
                 "単体デバイス".to_owned()
@@ -65,5 +72,22 @@ mod tests {
         ]);
         assert_eq!(groups.len(), 2);
         assert_eq!(groups[0].devices.len(), 2);
+    }
+
+    #[test]
+    fn labels_three_haritora_interfaces_as_gx6() {
+        let mut devices = [
+            device("1-1.2.1", Some("1-1.2")),
+            device("1-1.2.2", Some("1-1.2")),
+            device("1-1.2.3", Some("1-1.2")),
+        ];
+        for device in &mut devices {
+            device.vendor_id = "04da".into();
+            device.product_id = "3f18".into();
+        }
+
+        let groups = group_devices(&devices);
+
+        assert_eq!(groups[0].title, "HaritoraX Wireless GX6（3ポート）");
     }
 }
