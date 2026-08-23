@@ -264,16 +264,6 @@ async fn acquire(
             .into_response();
     }
 
-    let mut current = state.session.write().await;
-    if current.is_some() {
-        return (
-            StatusCode::CONFLICT,
-            Json(ErrorResponse {
-                error: "USB devices are already acquired".to_owned(),
-            }),
-        )
-            .into_response();
-    }
     if requested.is_empty() {
         return (
             StatusCode::BAD_REQUEST,
@@ -283,13 +273,45 @@ async fn acquire(
         )
             .into_response();
     }
-    if let Err(error) = control_devices(&state, HostControlAction::Bind, &requested).await {
+    let mut current = state.session.write().await;
+    if let Some(session) = current.as_ref()
+        && session.client_id != request.client_id
+    {
+        return (
+            StatusCode::CONFLICT,
+            Json(ErrorResponse {
+                error: "USB devices are already acquired".to_owned(),
+            }),
+        )
+            .into_response();
+    }
+    let already_acquired: BTreeSet<&str> = current
+        .as_ref()
+        .map(|session| session.devices.iter().map(String::as_str).collect())
+        .unwrap_or_default();
+    let additions: Vec<String> = requested
+        .into_iter()
+        .filter(|device| !already_acquired.contains(device.as_str()))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    if additions.is_empty() {
+        return (
+            StatusCode::OK,
+            Json(current.as_ref().expect("existing session").clone()),
+        )
+            .into_response();
+    }
+    if let Err(error) = control_devices(&state, HostControlAction::Bind, &additions).await {
         return (StatusCode::BAD_GATEWAY, Json(ErrorResponse { error })).into_response();
     }
-    let session = Session {
+    let mut session = current.clone().unwrap_or(Session {
         client_id: request.client_id,
-        devices: requested,
-    };
+        devices: Vec::new(),
+    });
+    session.devices.extend(additions);
+    session.devices.sort();
+    session.devices.dedup();
     *current = Some(session.clone());
     (StatusCode::CREATED, Json(session)).into_response()
 }
@@ -301,12 +323,34 @@ async fn release(
     let mut current = state.session.write().await;
     match current.as_ref() {
         Some(session) if session.client_id == request.client_id => {
-            if let Err(error) =
-                control_devices(&state, HostControlAction::Unbind, &session.devices).await
-            {
+            let targets = if request.devices.is_empty() {
+                session.devices.clone()
+            } else {
+                let owned: BTreeSet<&str> = session.devices.iter().map(String::as_str).collect();
+                if request
+                    .devices
+                    .iter()
+                    .any(|device| !owned.contains(device.as_str()))
+                {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(ErrorResponse {
+                            error: "release contains a device not owned by this session".to_owned(),
+                        }),
+                    )
+                        .into_response();
+                }
+                request.devices.clone()
+            };
+            if let Err(error) = control_devices(&state, HostControlAction::Unbind, &targets).await {
                 return (StatusCode::BAD_GATEWAY, Json(ErrorResponse { error })).into_response();
             }
-            *current = None;
+            let released: BTreeSet<&str> = targets.iter().map(String::as_str).collect();
+            let mut remaining = session.clone();
+            remaining
+                .devices
+                .retain(|device| !released.contains(device.as_str()));
+            *current = (!remaining.devices.is_empty()).then_some(remaining);
             StatusCode::NO_CONTENT.into_response()
         }
         Some(_) => (

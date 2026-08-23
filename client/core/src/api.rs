@@ -47,9 +47,14 @@ impl ApiClient {
     }
 
     pub fn release(&self, client_id: &str) -> Result<()> {
+        self.release_devices(client_id, Vec::new())
+    }
+
+    pub fn release_devices(&self, client_id: &str, devices: Vec<String>) -> Result<()> {
         let response = self.send(self.http.post(self.endpoint("api/release")?).json(
             &ReleaseRequest {
                 client_id: client_id.into(),
+                devices,
             },
         ))?;
         self.ensure_success(response).map(|_| ())

@@ -41,6 +41,8 @@ pub struct AcquireRequest {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ReleaseRequest {
     pub client_id: String,
+    #[serde(default)]
+    pub devices: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]

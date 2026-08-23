@@ -47,12 +47,22 @@ where
         ensure_allowed(device)?;
     }
     let api = ApiClient::new(config.server_url.clone())?;
-    if let Some(session) = api.session()?.session {
-        return if session.client_id == config.client_id {
-            Err(ClientError::SessionAlreadyExists)
-        } else {
-            Err(ClientError::SessionOwnedByOther(session.client_id))
-        };
+    let existing = api.session()?.session;
+    if let Some(session) = &existing
+        && session.client_id != config.client_id
+    {
+        return Err(ClientError::SessionOwnedByOther(session.client_id.clone()));
+    }
+    let devices: Vec<&UsbDevice> = devices
+        .iter()
+        .filter(|device| {
+            existing
+                .as_ref()
+                .is_none_or(|session| !session.devices.contains(&device.bus_id))
+        })
+        .collect();
+    if devices.is_empty() {
+        return existing.ok_or(ClientError::SessionAlreadyExists);
     }
     let bus_ids: Vec<String> = devices.iter().map(|device| device.bus_id.clone()).collect();
     progress("サーバーから利用権を取得しています".into());
@@ -69,6 +79,7 @@ where
                 usbip,
                 host,
                 &config.client_id,
+                &bus_ids,
                 &attached,
                 Some(&device.bus_id),
             );
@@ -81,6 +92,7 @@ where
                 usbip,
                 host,
                 &config.client_id,
+                &bus_ids,
                 &attached,
                 Some(&device.bus_id),
             );
@@ -95,6 +107,7 @@ where
                         usbip,
                         host,
                         &config.client_id,
+                        &bus_ids,
                         &attached,
                         Some(&device.bus_id),
                     );
@@ -110,6 +123,7 @@ where
                         usbip,
                         host,
                         &config.client_id,
+                        &bus_ids,
                         &attached,
                         Some(&device.bus_id),
                     );
@@ -139,6 +153,17 @@ where
     {
         return Err(ClientError::SessionOwnedByOther(owner.client_id.clone()));
     }
+    let remaining: Vec<String> = session
+        .as_ref()
+        .map(|session| {
+            session
+                .devices
+                .iter()
+                .filter(|device| !devices.contains(device))
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default();
     let mut detach_errors = Vec::new();
     let host = config
         .server_url
@@ -161,7 +186,23 @@ where
         }
     }
     progress("サーバーの利用権を解放しています".into());
-    api.release(&config.client_id)?;
+    api.release_devices(&config.client_id, devices.to_vec())?;
+    for bus_id in remaining {
+        match usbip.attached_port(&bus_id) {
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                progress(format!("{bus_id} のUSB/IP接続が失われたため復元しています"));
+                if let Err(error) = usbip.attach(host, &bus_id) {
+                    detach_errors.push(format!("{bus_id} の再接続に失敗: {error}"));
+                    continue;
+                }
+                if !usbip.is_dry_run() && !wait_for_port(usbip, &bus_id, &AtomicBool::new(false))? {
+                    detach_errors.push(format!("{bus_id} の再接続ポートを確認できません"));
+                }
+            }
+            Err(error) => detach_errors.push(format!("{bus_id} の接続確認に失敗: {error}")),
+        }
+    }
     if detach_errors.is_empty() {
         Ok(())
     } else {
@@ -187,6 +228,7 @@ fn rollback(
     usbip: &dyn UsbipRunner,
     host: &str,
     client_id: &str,
+    acquired: &[String],
     attached: &[String],
     failed: Option<&str>,
 ) {
@@ -203,12 +245,15 @@ fn rollback(
     for bus_id in attached.iter().rev() {
         let _ = usbip.detach_bus_id(bus_id);
     }
-    let _ = api.release(client_id);
+    let _ = api.release_devices(client_id, acquired.to_vec());
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::{
+        collections::BTreeSet,
+        sync::{Arc, Mutex},
+    };
 
     use tiny_http::{Header, Method, Response, Server, StatusCode};
     use url::Url;
@@ -297,6 +342,59 @@ mod tests {
         }
     }
 
+    struct DetachingAllUsbip {
+        calls: Mutex<Vec<String>>,
+        ports: Mutex<BTreeSet<String>>,
+    }
+
+    impl DetachingAllUsbip {
+        fn new(devices: &[&str]) -> Self {
+            Self {
+                calls: Mutex::new(Vec::new()),
+                ports: Mutex::new(devices.iter().map(|device| (*device).to_owned()).collect()),
+            }
+        }
+
+        fn record(&self, value: String) {
+            self.calls.lock().unwrap().push(value);
+        }
+    }
+
+    impl UsbipRunner for DetachingAllUsbip {
+        fn status(&self) -> Result<CommandOutput> {
+            Ok(MockUsbip::output())
+        }
+        fn list(&self, _host: &str) -> Result<CommandOutput> {
+            Ok(MockUsbip::output())
+        }
+        fn attach(&self, _host: &str, bus_id: &str) -> Result<CommandOutput> {
+            self.record(format!("attach:{bus_id}"));
+            self.ports.lock().unwrap().insert(bus_id.to_owned());
+            Ok(MockUsbip::output())
+        }
+        fn stop_attach(&self, _host: &str, bus_id: &str) -> Result<CommandOutput> {
+            self.record(format!("stop:{bus_id}"));
+            Ok(MockUsbip::output())
+        }
+        fn stop_all(&self) -> Result<CommandOutput> {
+            self.record("stop-all".into());
+            Ok(MockUsbip::output())
+        }
+        fn detach_bus_id(&self, bus_id: &str) -> Result<CommandOutput> {
+            self.record(format!("detach:{bus_id}"));
+            self.ports.lock().unwrap().clear();
+            Ok(MockUsbip::output())
+        }
+        fn attached_port(&self, bus_id: &str) -> Result<Option<String>> {
+            Ok(self
+                .ports
+                .lock()
+                .unwrap()
+                .contains(bus_id)
+                .then(|| format!("port-{bus_id}")))
+        }
+    }
+
     fn device() -> UsbDevice {
         device_with_id("1-2")
     }
@@ -334,6 +432,20 @@ mod tests {
         session_present: bool,
         request_count: usize,
     ) -> (String, Arc<Mutex<Vec<String>>>) {
+        api_server_with_session(
+            if session_present {
+                r#"{"session":{"client_id":"client-a","devices":["1-2"]}}"#
+            } else {
+                r#"{"session":null}"#
+            },
+            request_count,
+        )
+    }
+
+    fn api_server_with_session(
+        session_body: &'static str,
+        request_count: usize,
+    ) -> (String, Arc<Mutex<Vec<String>>>) {
         let server = Server::http("127.0.0.1:0").unwrap();
         let address = format!("http://{}/", server.server_addr());
         let requests = Arc::new(Mutex::new(Vec::new()));
@@ -346,13 +458,9 @@ mod tests {
                     .unwrap()
                     .push(format!("{} {path}", request.method()));
                 let (status, body) = match (request.method(), path.as_str()) {
-                    (&Method::Get, "/api/session") if session_present => (
-                        200,
-                        r#"{"session":{"client_id":"client-a","devices":["1-2"]}}"#,
-                    ),
-                    (&Method::Get, "/api/session") => (200, r#"{"session":null}"#),
+                    (&Method::Get, "/api/session") => (200, session_body),
                     (&Method::Post, "/api/acquire") => {
-                        (201, r#"{"client_id":"client-a","devices":["1-2"]}"#)
+                        (201, r#"{"client_id":"client-a","devices":["1-2","1-3"]}"#)
                     }
                     (&Method::Post, "/api/release") => (204, ""),
                     _ => (404, r#"{"error":"missing"}"#),
@@ -416,7 +524,7 @@ mod tests {
     }
 
     #[test]
-    fn attaches_all_three_gx6_interfaces() {
+    fn attaches_all_devices_in_a_multi_device_request() {
         let (base, _) = api_server(false, 2);
         let usbip = MockUsbip::new(false, false);
         let devices = [
@@ -441,7 +549,25 @@ mod tests {
     }
 
     #[test]
-    fn second_gx6_interface_failure_rolls_back_first_interface() {
+    fn adds_a_device_to_a_session_owned_by_the_same_client() {
+        let (base, _) = api_server(true, 2);
+        let usbip = MockUsbip::new(false, false);
+
+        let session = connect_group(
+            &config(base),
+            &usbip,
+            &[device_with_id("1-3")],
+            &AtomicBool::new(false),
+            |_| {},
+        )
+        .unwrap();
+
+        assert_eq!(session.devices, ["1-2", "1-3"]);
+        assert_eq!(usbip.calls.lock().unwrap().as_slice(), ["attach:1-3"]);
+    }
+
+    #[test]
+    fn second_device_failure_rolls_back_first_device() {
         let (base, requests) = api_server(false, 3);
         let usbip = MockUsbip::failing_on("1-1.2.2");
         let devices = [
@@ -491,5 +617,22 @@ mod tests {
                 .iter()
                 .any(|request| request == "POST /api/release")
         );
+    }
+
+    #[test]
+    fn restores_remaining_devices_when_detach_clears_all_windows_ports() {
+        let (base, _) = api_server_with_session(
+            r#"{"session":{"client_id":"client-a","devices":["1-2","1-3"]}}"#,
+            2,
+        );
+        let usbip = DetachingAllUsbip::new(&["1-2", "1-3"]);
+
+        disconnect_group(&config(base), &usbip, &["1-2".into()], |_| {}).unwrap();
+
+        assert_eq!(
+            usbip.calls.lock().unwrap().as_slice(),
+            ["stop:1-2", "detach:1-2", "attach:1-3"]
+        );
+        assert!(usbip.attached_port("1-3").unwrap().is_some());
     }
 }

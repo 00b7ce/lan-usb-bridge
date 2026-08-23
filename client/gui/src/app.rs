@@ -95,6 +95,7 @@ impl BridgeApp {
         self.state.last_error = None;
         let sender = self.sender.clone();
         let shutdown = self.shutdown.clone();
+        let target_count = devices.len();
         thread::spawn(move || {
             let usbip = WindowsUsbip::new(config.usbip_path.clone(), false);
             let progress_sender = sender.clone();
@@ -103,7 +104,13 @@ impl BridgeApp {
                     let _ = progress_sender.send(WorkerMessage::Progress(message));
                     ctx.request_repaint();
                 })
-                .map(|_| "グループを接続しました".to_owned())
+                .map(|_| {
+                    if target_count == 1 {
+                        "デバイスを接続しました".to_owned()
+                    } else {
+                        "グループを接続しました".to_owned()
+                    }
+                })
                 .map_err(|error| error.to_string());
             let _ = sender.send(WorkerMessage::OperationFinished(result));
             ctx.request_repaint();
@@ -117,6 +124,7 @@ impl BridgeApp {
         self.state.busy = true;
         self.state.last_error = None;
         let sender = self.sender.clone();
+        let target_count = devices.len();
         thread::spawn(move || {
             let usbip = WindowsUsbip::new(config.usbip_path.clone(), false);
             let progress_sender = sender.clone();
@@ -124,7 +132,13 @@ impl BridgeApp {
                 let _ = progress_sender.send(WorkerMessage::Progress(message));
                 ctx.request_repaint();
             })
-            .map(|()| "グループを切断しました".to_owned())
+            .map(|()| {
+                if target_count == 1 {
+                    "デバイスを切断しました".to_owned()
+                } else {
+                    "グループを切断しました".to_owned()
+                }
+            })
             .map_err(|error| error.to_string());
             let _ = sender.send(WorkerMessage::OperationFinished(result));
             ctx.request_repaint();
@@ -160,6 +174,12 @@ impl BridgeApp {
                 },
                 WorkerMessage::Refreshed(result) => match result {
                     Ok(snapshot) => {
+                        self.state.selected_devices.retain(|bus_id| {
+                            snapshot
+                                .devices
+                                .iter()
+                                .any(|device| &device.bus_id == bus_id)
+                        });
                         self.state.snapshot = Some(snapshot);
                         self.state.busy = false;
                         self.state.progress = "最新の状態です".into();
@@ -242,7 +262,7 @@ impl eframe::App for BridgeApp {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        match main_view::show(ui, &self.state) {
+        match main_view::show(ui, &mut self.state) {
             ViewAction::None => {}
             ViewAction::Refresh => self.spawn_refresh(ui.ctx().clone()),
             ViewAction::OpenSettings => self.state.show_settings = true,

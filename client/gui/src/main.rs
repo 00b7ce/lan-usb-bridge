@@ -21,8 +21,8 @@ fn main() -> eframe::Result {
         renderer: eframe::Renderer::Glow,
         viewport: egui::ViewportBuilder::default()
             .with_title("LAN USB Bridge")
-            .with_inner_size([960.0, 720.0])
-            .with_min_inner_size([760.0, 560.0]),
+            .with_inner_size([820.0, 600.0])
+            .with_min_inner_size([680.0, 480.0]),
         centered: true,
         persist_window: false,
         ..Default::default()

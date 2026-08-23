@@ -1,4 +1,7 @@
-use std::{collections::VecDeque, time::Instant};
+use std::{
+    collections::{BTreeSet, VecDeque},
+    time::Instant,
+};
 
 use usb_bridge_client_core::{config::Config, connection::Snapshot};
 
@@ -26,6 +29,7 @@ pub struct AppState {
     pub progress: String,
     pub last_error: Option<String>,
     pub logs: VecDeque<String>,
+    pub selected_devices: BTreeSet<String>,
     pub settings: SettingsDraft,
     pub show_settings: bool,
     pub show_logs: bool,
@@ -41,6 +45,7 @@ impl Default for AppState {
             progress: "設定を読み込んでいます".into(),
             last_error: None,
             logs: VecDeque::new(),
+            selected_devices: BTreeSet::new(),
             settings: SettingsDraft::default(),
             show_settings: false,
             show_logs: false,

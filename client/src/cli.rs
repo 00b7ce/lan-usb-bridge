@@ -161,12 +161,10 @@ fn attach(
 }
 
 fn ensure_not_owned_by_other(api: &ApiClient, client_id: &str) -> Result<()> {
-    if let Some(session) = api.session()?.session {
-        return if session.client_id == client_id {
-            Err(ClientError::SessionAlreadyExists)
-        } else {
-            Err(ClientError::SessionOwnedByOther(session.client_id))
-        };
+    if let Some(session) = api.session()?.session
+        && session.client_id != client_id
+    {
+        return Err(ClientError::SessionOwnedByOther(session.client_id));
     }
     Ok(())
 }
