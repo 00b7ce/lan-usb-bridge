@@ -8,8 +8,10 @@ Raspberry Piに接続したUSBデバイスをPC間で切り替えるための管
 
 ```text
 usb_bridge/
-├─ server/            Raspberry Pi用サーバーとWeb UI
-├─ client/            Windowsクライアント
+├─ server/            Raspberry Pi用サーバー、Web UI、権限分離host-agent
+├─ client/            Windows CLIクライアント
+│  ├─ core/           API・設定・ポリシー・USB/IP共通ライブラリ
+│  └─ gui/            egui/eframe/glow WindowsネイティブGUI
 ├─ crates/protocol/   APIの共有データ型
 ├─ compose.yml
 └─ Cargo.toml         Workspace定義
@@ -25,6 +27,7 @@ Windowsクライアントの起動:
 
 ```powershell
 cargo run --package usb-bridge-client
+cargo run --release --package usb-bridge-gui
 ```
 
 常用構成ではPiのsysfsを読み取り専用で参照し、USBハブを除くUSBデバイスを

@@ -3,6 +3,15 @@
 LAN USB Bridgeサーバーの利用権管理APIと、Windows用USB/IPクライアント
 [usbip-win2](https://github.com/vadimgrn/usbip-win2) を扱うCLIです。
 
+クライアントは共通coreライブラリ、CLI、WindowsネイティブGUIで構成されています。
+
+```text
+client/
+├── core/   API・設定・デバイスポリシー・USB/IP・接続制御
+├── gui/    egui + eframe + glowによるWindows GUI
+└── src/    CLI
+```
+
 > 現在のサーバーはUSBデバイス列挙とセッション管理までです。Linux側の
 > `usbip bind` / `unbind` や `usbipd` の公開処理はまだ実装されていません。
 > そのため、本CLIだけで実機USB転送が完結する段階ではありません。
@@ -16,9 +25,28 @@ LAN USB Bridgeサーバーの利用権管理APIと、Windows用USB/IPクライ�
 
 ```powershell
 cargo build --release --package usb-bridge-client
+cargo build --release --package usb-bridge-gui
 ```
 
-生成物は `target\release\usb-bridge-client.exe` です。
+生成物は `target\release\usb-bridge-client.exe` と `target\release\usb-bridge-gui.exe` です。
+GUIのreleaseビルドはコンソールウィンドウを表示しません。
+
+## Windows GUI
+
+```powershell
+cargo run --release --package usb-bridge-gui
+```
+
+- Windows 11向けダークテーマ
+- 親USBハブ単位のカードとグループ接続・切断
+- 利用可能、接続中、WARNING、禁止、他PC使用中、エラーを色・アイコン・文字で表示
+- HTTP、usbip.exe、待機、設定保存、ログ書き込みはワーカースレッドで実行
+- 5秒間隔で状態更新し、最小化・非表示時は20秒へ低下
+- Local AppData配下に最大1 MiBのログと1世代のローテーションを保存
+
+GUIはeframe 0.36.1の `accesskit`、`default_fonts`、`glow` featureだけを使用します。
+描画はOpenGL系のglowで、WebView、WASM、wgpu、Node.jsを使用しません。日本語表示には
+Windows標準のYu Gothic、Meiryo、MS Gothicを順に検索して利用します。
 
 ## usbip-win2の準備
 

@@ -23,10 +23,11 @@ use tokio::{
 use tokio::{net::TcpListener, sync::RwLock};
 use tracing::{info, warn};
 use usb_bridge_protocol::{
-    AcquireRequest, ErrorResponse, HealthResponse, HostControlAction, HostControlRequest,
-    HostControlResponse, ReleaseRequest, SelectionRequest, SelectionResponse, Session,
-    SessionResponse, UsbDevice,
+    AcquireRequest, ErrorResponse, HealthResponse, HostControlAction, ReleaseRequest,
+    SelectionRequest, SelectionResponse, Session, SessionResponse, UsbDevice,
 };
+#[cfg(unix)]
+use usb_bridge_protocol::{HostControlRequest, HostControlResponse};
 
 const INDEX_HTML: &str = include_str!("../web/index.html");
 
@@ -36,6 +37,7 @@ struct AppState {
     sysfs_root: PathBuf,
     selection_file: PathBuf,
     control_backend: String,
+    #[cfg(unix)]
     host_agent_socket: PathBuf,
     selected: Arc<RwLock<BTreeSet<String>>>,
     session: Arc<RwLock<Option<Session>>>,
@@ -73,6 +75,7 @@ async fn main() {
         eprintln!("unsupported USB_CONTROL_BACKEND={control_backend}; use mock or host-agent");
         std::process::exit(2);
     }
+    #[cfg(unix)]
     let host_agent_socket = env::var("HOST_AGENT_SOCKET")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("/run/lan-usb-bridge/host-agent.sock"));
@@ -87,6 +90,7 @@ async fn main() {
         sysfs_root,
         selection_file,
         control_backend,
+        #[cfg(unix)]
         host_agent_socket,
         selected: Arc::new(RwLock::new(selected)),
         session: Arc::new(RwLock::new(None)),
@@ -327,7 +331,7 @@ async fn control_devices(
     #[cfg(not(unix))]
     {
         let _ = (action, devices);
-        return Err("host-agent control is only supported on Unix".to_owned());
+        Err("host-agent control is only supported on Unix".to_owned())
     }
     #[cfg(unix)]
     {

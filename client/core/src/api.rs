@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use reqwest::blocking::{Client, Response};
+use reqwest::blocking::{Client, RequestBuilder, Response};
 use serde::{Serialize, de::DeserializeOwned};
 use url::Url;
 use usb_bridge_protocol::{
@@ -20,7 +20,9 @@ impl ApiClient {
         let http = Client::builder()
             .timeout(Duration::from_secs(10))
             .build()
-            .map_err(|e| ClientError::Config(format!("HTTPクライアントを初期化できません: {e}")))?;
+            .map_err(|error| {
+                ClientError::Config(format!("HTTPクライアントを初期化できません: {error}"))
+            })?;
         Ok(Self { base_url, http })
     }
 
@@ -33,6 +35,7 @@ impl ApiClient {
     pub fn session(&self) -> Result<SessionResponse> {
         self.get("api/session")
     }
+
     pub fn acquire(&self, client_id: &str, devices: Vec<String>) -> Result<Session> {
         self.post_json(
             "api/acquire",
@@ -42,6 +45,7 @@ impl ApiClient {
             },
         )
     }
+
     pub fn release(&self, client_id: &str) -> Result<()> {
         let response = self.send(self.http.post(self.endpoint("api/release")?).json(
             &ReleaseRequest {
@@ -66,14 +70,14 @@ impl ApiClient {
     fn endpoint(&self, path: &str) -> Result<Url> {
         self.base_url
             .join(path)
-            .map_err(|e| ClientError::Config(format!("API URLを構築できません: {e}")))
+            .map_err(|error| ClientError::Config(format!("API URLを構築できません: {error}")))
     }
 
-    fn send(&self, request: reqwest::blocking::RequestBuilder) -> Result<Response> {
+    fn send(&self, request: RequestBuilder) -> Result<Response> {
         let url = request
             .try_clone()
-            .and_then(|r| r.build().ok())
-            .map(|r| r.url().to_string())
+            .and_then(|request| request.build().ok())
+            .map(|request| request.url().to_string())
             .unwrap_or_else(|| self.base_url.to_string());
         request
             .send()
@@ -87,7 +91,7 @@ impl ApiClient {
         let status = response.status();
         let text = response.text().unwrap_or_default();
         let message = serde_json::from_str::<ErrorResponse>(&text)
-            .map(|e| e.error)
+            .map(|error| error.error)
             .unwrap_or_else(|_| {
                 if text.trim().is_empty() {
                     status

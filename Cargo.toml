@@ -1,6 +1,8 @@
 [workspace]
 members = [
     "client",
+    "client/core",
+    "client/gui",
     "crates/protocol",
     "server",
     "server/host-agent",

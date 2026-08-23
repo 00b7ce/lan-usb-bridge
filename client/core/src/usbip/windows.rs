@@ -30,7 +30,7 @@ impl WindowsUsbip {
                     "dry-run: {} {}",
                     self.executable.display(),
                     args.iter()
-                        .map(|a| a.to_string_lossy())
+                        .map(|arg| arg.to_string_lossy())
                         .collect::<Vec<_>>()
                         .join(" ")
                 ),
@@ -80,7 +80,7 @@ impl WindowsUsbip {
         }
     }
 
-    fn port_for_bus_id(output: &str, bus_id: &str) -> Option<String> {
+    pub fn port_for_bus_id(output: &str, bus_id: &str) -> Option<String> {
         let mut port = None;
         for line in output.lines() {
             let trimmed = line.trim();
@@ -88,8 +88,8 @@ impl WindowsUsbip {
                 port = rest
                     .split(':')
                     .next()
-                    .map(|p| p.trim_start_matches('0').to_owned())
-                    .map(|p| if p.is_empty() { "0".into() } else { p });
+                    .map(|value| value.trim_start_matches('0').to_owned())
+                    .map(|value| if value.is_empty() { "0".into() } else { value });
             }
             if (trimmed.contains(&format!("/{bus_id}"))
                 || trimmed.contains(&format!("busid={bus_id}")))
@@ -103,29 +103,45 @@ impl WindowsUsbip {
 }
 
 impl UsbipRunner for WindowsUsbip {
+    fn is_dry_run(&self) -> bool {
+        self.dry_run
+    }
     fn status(&self) -> Result<CommandOutput> {
         self.execute(["port"])
     }
     fn list(&self, host: &str) -> Result<CommandOutput> {
-        self.execute(["list", "-r", host])
+        self.execute(["list", "--remote", host])
     }
     fn attach(&self, host: &str, bus_id: &str) -> Result<CommandOutput> {
-        self.execute(["attach", "-r", host, "-b", bus_id])
+        self.execute(["attach", "--remote", host, "--bus-id", bus_id])
+    }
+    fn stop_attach(&self, host: &str, bus_id: &str) -> Result<CommandOutput> {
+        self.execute(["attach", "--remote", host, "--bus-id", bus_id, "--stop"])
+    }
+    fn stop_all(&self) -> Result<CommandOutput> {
+        self.execute(["attach", "--stop-all"])
     }
     fn detach_bus_id(&self, bus_id: &str) -> Result<CommandOutput> {
         if self.dry_run {
-            return self.execute(["detach", "-p", "<resolved-port>"]);
+            return self.execute(["detach", "--port", "<resolved-port>"]);
         }
-        let status = self.status()?;
-        let port = Self::port_for_bus_id(&status.stdout, bus_id)
+        let port = self
+            .attached_port(bus_id)?
             .ok_or_else(|| ClientError::UsbipPortNotFound(bus_id.into()))?;
-        self.execute(["detach", "-p", &port])
+        self.execute(["detach", "--port", &port])
+    }
+    fn attached_port(&self, bus_id: &str) -> Result<Option<String>> {
+        if self.dry_run {
+            return Ok(Some("<dry-run-port>".into()));
+        }
+        Ok(Self::port_for_bus_id(&self.status()?.stdout, bus_id))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn parses_port_for_bus_id() {
         let output = "Port 01: <Port in Use>\n  device\n  8-1 -> usbip://192.0.2.1:3240/1-1.5 (remote bus/dev)\n";
@@ -134,15 +150,23 @@ mod tests {
             Some("1")
         );
     }
+
     #[test]
-    fn dry_run_does_not_execute() {
+    fn dry_run_uses_0978_long_options() {
         let runner = WindowsUsbip::new(PathBuf::from("missing.exe"), true);
         assert!(
             runner
                 .attach("example.test", "1-2")
                 .unwrap()
                 .stdout
-                .contains("attach -r example.test -b 1-2")
+                .contains("attach --remote example.test --bus-id 1-2")
+        );
+        assert!(
+            runner
+                .stop_attach("example.test", "1-2")
+                .unwrap()
+                .stdout
+                .ends_with("--stop")
         );
     }
 }

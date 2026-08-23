@@ -1,0 +1,11 @@
+[package]
+name = "usb-bridge-gui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+eframe = { version = "0.36.1", default-features = false, features = ["accesskit", "default_fonts", "glow"] }
+usb-bridge-client-core = { path = "../core" }
+usb-bridge-protocol = { path = "../../crates/protocol" }

@@ -19,7 +19,7 @@ pub enum ClientError {
         message: String,
     },
     #[error(
-        "usbip-win2が見つかりません。公式インストーラーで導入し、usbip.exeをPATHへ追加するか --usbip-path を指定してください"
+        "usbip-win2が見つかりません。公式インストーラーで導入し、usbip.exeをPATHへ追加するか設定画面でパスを指定してください"
     )]
     UsbipNotFound,
     #[error("usbip-win2の実行に失敗しました: {0}")]
@@ -32,11 +32,13 @@ pub enum ClientError {
     },
     #[error("BUS_ID {0} に対応する接続済みUSB/IPポートが見つかりません")]
     UsbipPortNotFound(String),
+    #[error(
+        "FTDIデバイス {0} をWindowsで列挙できませんでした。usbip-win2とFTDIドライバーの既知の互換性問題の可能性があります"
+    )]
+    FtdiCompatibility(String),
     #[error("セッションは別のクライアント {0} が使用中です。強制取得・強制解放は行いません")]
     SessionOwnedByOther(String),
-    #[error(
-        "このクライアントには既存セッションがあります。重複取得は行いません。先に session または release を確認してください"
-    )]
+    #[error("このクライアントには既存セッションがあります。重複取得は行いません")]
     SessionAlreadyExists,
     #[error("デバイス {0} はサーバーの一覧に存在しないか選択できません")]
     DeviceUnavailable(String),
@@ -47,6 +49,10 @@ pub enum ClientError {
         bus_id: String,
         class_name: &'static str,
     },
+    #[error("処理はアプリケーション終了により中止されました")]
+    Cancelled,
+    #[error("接続解除中にエラーが発生しました: {0}")]
+    Disconnect(String),
 }
 
 pub type Result<T> = std::result::Result<T, ClientError>;

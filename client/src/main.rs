@@ -1,8 +1,4 @@
-mod api;
 mod cli;
-mod config;
-mod error;
-mod usbip;
 
 fn main() {
     if let Err(error) = cli::run() {

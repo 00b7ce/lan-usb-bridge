@@ -1,14 +1,19 @@
+#[cfg(unix)]
 use std::{env, path::PathBuf, process::Stdio};
 
+#[cfg(unix)]
 use tokio::{
     fs,
     io::{AsyncReadExt, AsyncWriteExt},
     net::{UnixListener, UnixStream},
     process::Command,
 };
+#[cfg(unix)]
 use tracing::{error, info};
+#[cfg(unix)]
 use usb_bridge_protocol::{HostControlAction, HostControlRequest, HostControlResponse};
 
+#[cfg(unix)]
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt()
@@ -62,6 +67,13 @@ async fn main() {
     }
 }
 
+#[cfg(not(unix))]
+fn main() {
+    eprintln!("usb-bridge-host-agent is only supported on Unix");
+    std::process::exit(2);
+}
+
+#[cfg(unix)]
 async fn handle(mut stream: UnixStream, sysfs: PathBuf, usbip: String) -> Result<(), String> {
     let mut bytes = Vec::new();
     stream
@@ -104,6 +116,7 @@ async fn handle(mut stream: UnixStream, sysfs: PathBuf, usbip: String) -> Result
         .map_err(|error| format!("failed to write response: {error}"))
 }
 
+#[cfg(unix)]
 async fn validate_bus_id(sysfs: &std::path::Path, bus_id: &str) -> Result<(), String> {
     if !is_valid_bus_id(bus_id) {
         return Err(format!("invalid USB bus ID: {bus_id:?}"));
@@ -149,6 +162,7 @@ async fn validate_bus_id(sysfs: &std::path::Path, bus_id: &str) -> Result<(), St
     Ok(())
 }
 
+#[cfg(unix)]
 fn is_valid_bus_id(bus_id: &str) -> bool {
     !bus_id.is_empty()
         && bus_id.len() <= 32
@@ -158,6 +172,7 @@ fn is_valid_bus_id(bus_id: &str) -> bool {
         && bus_id.contains('-')
 }
 
+#[cfg(unix)]
 fn prohibited_class(class: &str) -> Option<&'static str> {
     if class.eq_ignore_ascii_case("08") {
         Some("mass-storage")
@@ -170,6 +185,7 @@ fn prohibited_class(class: &str) -> Option<&'static str> {
     }
 }
 
+#[cfg(unix)]
 async fn bind_all(usbip: &str, devices: &[String]) -> Result<(), String> {
     let mut bound: Vec<String> = Vec::new();
     for bus_id in devices {
@@ -184,6 +200,7 @@ async fn bind_all(usbip: &str, devices: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(unix)]
 async fn unbind_all(usbip: &str, devices: &[String]) -> Result<(), String> {
     let mut errors = Vec::new();
     for bus_id in devices {
@@ -198,6 +215,7 @@ async fn unbind_all(usbip: &str, devices: &[String]) -> Result<(), String> {
     }
 }
 
+#[cfg(unix)]
 async fn run_usbip(usbip: &str, operation: &str, bus_id: &str) -> Result<(), String> {
     let output = Command::new(usbip)
         .arg(operation)
@@ -220,7 +238,7 @@ async fn run_usbip(usbip: &str, operation: &str, bus_id: &str) -> Result<(), Str
     ))
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::{is_valid_bus_id, prohibited_class};
 
