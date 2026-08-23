@@ -6,9 +6,9 @@ RUN cargo install cargo-watch --locked \
     && chown --recursive developer:developer /usr/local/cargo
 
 ENV LISTEN_ADDRESS=0.0.0.0:8080 \
-    RUST_LOG=usb_bridge=debug \
+    RUST_LOG=usb_bridge_server=debug \
     USB_BACKEND=mock
 
 EXPOSE 8080
 USER developer
-CMD ["cargo", "watch", "--why", "-x", "run"]
+CMD ["cargo", "watch", "--why", "-x", "run --package usb-bridge-server"]

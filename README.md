@@ -4,6 +4,29 @@ Raspberry Piに接続したUSBデバイスをPC間で切り替えるための管
 データ転送にはLinux USB/IPを利用し、このアプリはデバイス検出、排他制御、
 一括接続・解放とWeb UIを担当する予定です。
 
+## Workspace構成
+
+```text
+usb_bridge/
+├─ server/            Raspberry Pi用サーバーとWeb UI
+├─ client/            Windowsクライアント
+├─ crates/protocol/   APIの共有データ型
+├─ compose.yml
+└─ Cargo.toml         Workspace定義
+```
+
+Workspace全体の確認:
+
+```bash
+cargo check --workspace
+```
+
+Windowsクライアントの起動:
+
+```powershell
+cargo run --package usb-bridge-client
+```
+
 常用構成ではPiのsysfsを読み取り専用で参照し、USBハブを除くUSBデバイスを
 動的に列挙します。USB/IPの`bind`/`unbind`はまだ実行しません。
 
@@ -40,6 +63,7 @@ http://127.0.0.1:8080/
 ```dotenv
 USB_BRIDGE_BIND_ADDRESS=0.0.0.0
 USB_BRIDGE_PORT=8080
+RUST_LOG=usb_bridge_server=info
 ```
 
 ## API
@@ -71,3 +95,7 @@ curl -X POST http://127.0.0.1:8080/api/acquire \
 - USB/IPのroot操作は、後から小さなホストヘルパーとして分離します。
 - 任意コマンドではなく、登録済みUSBパスの`bind`/`unbind`だけを許可します。
 - USB/IPのTCP 3240をインターネットへ公開しません。
+
+## ライセンス
+
+このプロジェクトは[Apache License 2.0](LICENSE)で公開されています。

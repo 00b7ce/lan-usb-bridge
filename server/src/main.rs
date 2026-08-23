@@ -15,9 +15,12 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use serde::{Deserialize, Serialize};
 use tokio::{net::TcpListener, sync::RwLock};
 use tracing::{info, warn};
+use usb_bridge_protocol::{
+    AcquireRequest, ErrorResponse, SelectionRequest, SelectionResponse, Session, SessionResponse,
+    UsbDevice,
+};
 
 const INDEX_HTML: &str = include_str!("../web/index.html");
 
@@ -30,63 +33,10 @@ struct AppState {
     session: Arc<RwLock<Option<Session>>>,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, serde::Serialize)]
 struct Health {
     status: &'static str,
     backend: String,
-}
-
-#[derive(Clone, Serialize)]
-struct UsbDevice {
-    bus_id: String,
-    vendor_id: String,
-    product_id: String,
-    manufacturer: Option<String>,
-    product: Option<String>,
-    serial_number: Option<String>,
-    device_class: String,
-    interface_classes: Vec<String>,
-    drivers: Vec<String>,
-    parent_hub: Option<String>,
-    selected: bool,
-    selectable: bool,
-    risk: &'static str,
-    warning: Option<&'static str>,
-    status: &'static str,
-}
-
-#[derive(Clone, Serialize)]
-struct Session {
-    client_id: String,
-    devices: Vec<String>,
-}
-
-#[derive(Deserialize)]
-struct AcquireRequest {
-    client_id: String,
-    #[serde(default)]
-    devices: Vec<String>,
-}
-
-#[derive(Deserialize, Serialize)]
-struct SelectionRequest {
-    #[serde(default)]
-    devices: Vec<String>,
-}
-
-#[derive(Serialize)]
-struct SelectionResponse {
-    devices: Vec<String>,
-}
-
-#[derive(Serialize)]
-struct SessionResponse {
-    session: Option<Session>,
-}
-
-#[derive(Serialize)]
-struct ErrorResponse {
-    error: String,
 }
 
 #[tokio::main]
@@ -287,9 +237,9 @@ fn enumerate_devices(state: &AppState, selected: &BTreeSet<String>) -> Result<Ve
             parent_hub: parent_usb_path(&bus_id),
             selected: selected.contains(&bus_id),
             selectable,
-            risk,
-            warning,
-            status: "available",
+            risk: risk.to_owned(),
+            warning: warning.map(str::to_owned),
+            status: "available".to_owned(),
             bus_id,
             device_class,
             interface_classes,
@@ -405,9 +355,9 @@ fn mock_devices(selected: &BTreeSet<String>) -> Vec<UsbDevice> {
         parent_hub: parent_usb_path(bus_id),
         selected: selected.contains(bus_id),
         selectable: true,
-        risk: "normal",
+        risk: "normal".to_owned(),
         warning: None,
-        status: "available",
+        status: "available".to_owned(),
     })
     .collect()
 }

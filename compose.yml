@@ -2,12 +2,12 @@ services:
   usb-bridge:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: server/Dockerfile
       network: host
     container_name: usb-bridge
     environment:
       LISTEN_ADDRESS: 0.0.0.0:8080
-      RUST_LOG: ${RUST_LOG:-usb_bridge=info}
+      RUST_LOG: ${RUST_LOG:-usb_bridge_server=info}
       USB_BACKEND: ${USB_BACKEND:-sysfs}
       USB_SYSFS_ROOT: /host/sys/bus/usb/devices
       SELECTION_FILE: /data/selection.json
@@ -19,7 +19,7 @@ services:
     ports:
       - "${USB_BRIDGE_BIND_ADDRESS:-127.0.0.1}:${USB_BRIDGE_PORT:-8080}:8080"
     healthcheck:
-      test: ["CMD", "/usr/local/bin/usb-bridge", "--healthcheck"]
+      test: ["CMD", "/usr/local/bin/usb-bridge-server", "--healthcheck"]
       interval: 10s
       timeout: 3s
       retries: 3

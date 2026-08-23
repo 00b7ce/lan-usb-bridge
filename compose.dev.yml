@@ -2,10 +2,10 @@ services:
   usb-bridge:
     build:
       context: .
-      dockerfile: Dockerfile.dev
+      dockerfile: server/Dockerfile.dev
       network: host
     environment:
-      RUST_LOG: usb_bridge=debug
+      RUST_LOG: usb_bridge_server=debug
       USB_BACKEND: mock
     volumes:
       - .:/workspace
