@@ -90,6 +90,7 @@ pub fn run() -> Result<()> {
         Command::Session => print_session(api.session()?.session.as_ref()),
         Command::Acquire(ids) => {
             ensure_not_owned_by_other(&api, &cfg.client_id)?;
+            validate_acquire_devices(&api.devices()?, &ids.devices)?;
             let session = api.acquire(&cfg.client_id, ids.devices)?;
             print_session(Some(&session));
             println!(
@@ -129,8 +130,12 @@ fn attach(
     let devices = api.devices()?;
     let device = devices
         .iter()
-        .find(|d| d.bus_id == bus_id && d.selectable)
+        .find(|d| d.bus_id == bus_id)
         .ok_or_else(|| ClientError::DeviceUnavailable(bus_id.into()))?;
+    ensure_allowed(device)?;
+    if !device.selectable {
+        return Err(ClientError::DeviceUnavailable(bus_id.into()));
+    }
     warn_device(device);
     if dry_run {
         println!("dry-run: acquire client_id={client_id} BUS_ID={bus_id}");
@@ -189,11 +194,27 @@ fn print_devices(devices: &[UsbDevice]) {
     }
     for d in devices {
         let name = d.product.as_deref().unwrap_or("(製品名不明)");
+        let policy = if prohibited_class(d).is_some() || !d.selectable {
+            "禁止"
+        } else if is_ftdi(d) || d.risk != "normal" {
+            "WARNING"
+        } else {
+            "許可"
+        };
         println!(
-            "{}  {}:{}  {}  selectable={} risk={} status={}",
-            d.bus_id, d.vendor_id, d.product_id, name, d.selectable, d.risk, d.status
+            "[{}] {}  {}:{}  {}  selectable={} risk={} status={}",
+            policy, d.bus_id, d.vendor_id, d.product_id, name, d.selectable, d.risk, d.status
         );
-        if let Some(warning) = &d.warning {
+        if let Some(class_name) = prohibited_class(d) {
+            println!("  禁止理由: {class_name}クラスは安全上の理由により転送対象外です");
+        }
+        if is_ftdi(d) {
+            println!("  WARNING: FTDI系デバイスはusbip-win2で互換性問題が報告されています");
+        }
+        if prohibited_class(d).is_none()
+            && !is_ftdi(d)
+            && let Some(warning) = &d.warning
+        {
             println!("  警告: {warning}");
         }
     }
@@ -221,6 +242,12 @@ fn warn_for_device(devices: &[UsbDevice], bus_id: &str) {
 }
 
 fn warn_device(device: &UsbDevice) {
+    if is_ftdi(device) {
+        eprintln!(
+            "WARNING: {} はFTDI系デバイスです。usbip-win2では列挙失敗やSTATUS_NO_SUCH_DEVICEなどの互換性問題が報告されています。",
+            device.bus_id
+        );
+    }
     if device.risk != "normal"
         || device
             .interface_classes
@@ -237,11 +264,117 @@ fn warn_device(device: &UsbDevice) {
     }
 }
 
+fn validate_acquire_devices(devices: &[UsbDevice], requested: &[String]) -> Result<()> {
+    let targets: Vec<&UsbDevice> = if requested.is_empty() {
+        devices.iter().filter(|device| device.selected).collect()
+    } else {
+        requested
+            .iter()
+            .map(|bus_id| {
+                devices
+                    .iter()
+                    .find(|device| &device.bus_id == bus_id)
+                    .ok_or_else(|| ClientError::DeviceUnavailable(bus_id.clone()))
+            })
+            .collect::<Result<_>>()?
+    };
+    for device in targets {
+        ensure_allowed(device)?;
+        if !device.selectable {
+            return Err(ClientError::DeviceUnavailable(device.bus_id.clone()));
+        }
+        warn_device(device);
+    }
+    Ok(())
+}
+
+fn ensure_allowed(device: &UsbDevice) -> Result<()> {
+    if let Some(class_name) = prohibited_class(device) {
+        return Err(ClientError::ProhibitedDevice {
+            bus_id: device.bus_id.clone(),
+            class_name,
+        });
+    }
+    Ok(())
+}
+
+fn prohibited_class(device: &UsbDevice) -> Option<&'static str> {
+    if device
+        .interface_classes
+        .iter()
+        .any(|class| class.eq_ignore_ascii_case("08"))
+    {
+        Some("ストレージ")
+    } else if device
+        .interface_classes
+        .iter()
+        .any(|class| class.eq_ignore_ascii_case("01"))
+    {
+        Some("オーディオ")
+    } else if device
+        .interface_classes
+        .iter()
+        .any(|class| class.eq_ignore_ascii_case("0e"))
+    {
+        Some("ビデオ")
+    } else {
+        None
+    }
+}
+
+fn is_ftdi(device: &UsbDevice) -> bool {
+    device.vendor_id.eq_ignore_ascii_case("0403")
+}
+
 fn print_output(output: CommandOutput) {
     if !output.stdout.is_empty() {
         println!("{}", output.stdout);
     }
     if !output.stderr.is_empty() {
         eprintln!("{}", output.stderr);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_ftdi, prohibited_class};
+    use usb_bridge_protocol::UsbDevice;
+
+    fn device(vendor_id: &str, classes: &[&str]) -> UsbDevice {
+        UsbDevice {
+            bus_id: "1-1".into(),
+            vendor_id: vendor_id.into(),
+            product_id: "0001".into(),
+            manufacturer: None,
+            product: None,
+            serial_number: None,
+            device_class: "00".into(),
+            interface_classes: classes.iter().map(|class| (*class).into()).collect(),
+            drivers: Vec::new(),
+            parent_hub: None,
+            selected: false,
+            selectable: true,
+            risk: "normal".into(),
+            warning: None,
+            status: "available".into(),
+        }
+    }
+
+    #[test]
+    fn recognizes_prohibited_interface_in_composite_device() {
+        assert_eq!(
+            prohibited_class(&device("1234", &["03", "08"])),
+            Some("ストレージ")
+        );
+        assert_eq!(
+            prohibited_class(&device("1234", &["01"])),
+            Some("オーディオ")
+        );
+        assert_eq!(prohibited_class(&device("1234", &["0E"])), Some("ビデオ"));
+    }
+
+    #[test]
+    fn recognizes_ftdi_vendor_case_insensitively() {
+        assert!(is_ftdi(&device("0403", &["ff"])));
     }
 }

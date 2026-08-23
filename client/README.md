@@ -53,6 +53,16 @@ cargo build --release --package usb-bridge-client
 
 TLS証明書検証は無効化しません。USB/IP接続先にはServer URLのホストだけを使います。
 
+### デバイスポリシー
+
+- USB Mass Storage（interface class `08`）は禁止
+- USB Audio（interface class `01`）は禁止
+- USB Video（interface class `0e`）は禁止
+- FTDI（vendor ID `0403`）はusbip-win2の既知の互換性問題があるためWARNING
+
+禁止デバイスは一覧には理由付きで表示しますが、APIのacquireとUSB/IP attachを拒否します。
+複合デバイスは、いずれかのインターフェースが禁止クラスならデバイス全体を禁止します。
+
 ## CLI例
 
 ```powershell

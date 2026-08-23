@@ -208,6 +208,40 @@ async fn acquire(
         )
             .into_response();
     }
+    let selected = state.selected.read().await.clone();
+    let available = match enumerate_devices(&state, &selected) {
+        Ok(devices) => devices,
+        Err(error) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error }),
+            )
+                .into_response();
+        }
+    };
+    let requested = if request.devices.is_empty() {
+        selected.into_iter().collect::<Vec<_>>()
+    } else {
+        request.devices
+    };
+    let selectable: BTreeSet<_> = available
+        .iter()
+        .filter(|device| device.selectable)
+        .map(|device| device.bus_id.as_str())
+        .collect();
+    if requested
+        .iter()
+        .any(|device| !selectable.contains(device.as_str()))
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "acquire contains an unavailable or prohibited USB device".to_owned(),
+            }),
+        )
+            .into_response();
+    }
+
     let mut current = state.session.write().await;
     if current.is_some() {
         return (
@@ -218,14 +252,9 @@ async fn acquire(
         )
             .into_response();
     }
-    let devices = if request.devices.is_empty() {
-        state.selected.read().await.iter().cloned().collect()
-    } else {
-        request.devices
-    };
     let session = Session {
         client_id: request.client_id,
-        devices,
+        devices: requested,
     };
     *current = Some(session.clone());
     (StatusCode::CREATED, Json(session)).into_response()
@@ -278,9 +307,10 @@ fn enumerate_devices(
         }
         let interface_classes = interface_attributes(&state.sysfs_root, &bus_id, "bInterfaceClass");
         let drivers = interface_drivers(&state.sysfs_root, &bus_id);
-        let (selectable, risk, warning) = classify_device(&interface_classes, &drivers);
+        let vendor_id = read_attribute(&path, "idVendor").unwrap_or_default();
+        let (selectable, risk, warning) = classify_device(&vendor_id, &interface_classes, &drivers);
         devices.push(UsbDevice {
-            vendor_id: read_attribute(&path, "idVendor").unwrap_or_default(),
+            vendor_id,
             product_id: read_attribute(&path, "idProduct").unwrap_or_default(),
             manufacturer: read_attribute(&path, "manufacturer"),
             product: read_attribute(&path, "product"),
@@ -340,14 +370,36 @@ fn interface_drivers(root: &Path, bus_id: &str) -> Vec<String> {
 }
 
 fn classify_device(
+    vendor_id: &str,
     interface_classes: &[String],
     drivers: &[String],
 ) -> (bool, &'static str, Option<&'static str>) {
     if interface_classes.iter().any(|class| class == "08") {
         return (
+            false,
+            "prohibited",
+            Some("禁止: ストレージクラスは切断時にデータを破損する危険があるため転送できません"),
+        );
+    }
+    if interface_classes.iter().any(|class| class == "01") {
+        return (
+            false,
+            "prohibited",
+            Some("禁止: オーディオクラスは現在の安全な対応範囲外です"),
+        );
+    }
+    if interface_classes.iter().any(|class| class == "0e") {
+        return (
+            false,
+            "prohibited",
+            Some("禁止: ビデオクラスは現在の安全な対応範囲外です"),
+        );
+    }
+    if vendor_id.eq_ignore_ascii_case("0403") {
+        return (
             true,
             "caution",
-            Some("ストレージを転送するとPi側から切断されます"),
+            Some("WARNING: FTDI系デバイスはusbip-win2で互換性問題が報告されています"),
         );
     }
     if !drivers.iter().any(|driver| driver == "cdc_acm")
@@ -359,16 +411,6 @@ fn classify_device(
             true,
             "caution",
             Some("ネットワーク機器の場合、Piとの接続を失う可能性があります"),
-        );
-    }
-    if interface_classes
-        .iter()
-        .any(|class| matches!(class.as_str(), "01" | "0e"))
-    {
-        return (
-            true,
-            "caution",
-            Some("オーディオ・映像機器は帯域を多く使用する場合があります"),
         );
     }
     (true, "normal", None)
@@ -421,10 +463,17 @@ fn mock_devices(selected: &BTreeSet<String>) -> Vec<UsbDevice> {
         ("1-1.2.3", "04da", "3f18", "HaritoraX Wireless", "02"),
         ("1-1.4", "1234", "0001", "USB Keyboard", "03"),
         ("1-1.5", "1234", "0002", "USB Mouse", "03"),
+        ("1-1.6", "0781", "0001", "USB Storage", "08"),
+        ("1-1.7", "1234", "0003", "USB Audio", "01"),
+        ("1-1.8", "1234", "0004", "USB Camera", "0e"),
+        ("1-1.9", "0403", "6001", "FTDI Serial Adapter", "ff"),
     ]
     .into_iter()
-    .map(
-        |(bus_id, vendor_id, product_id, product, class)| UsbDevice {
+    .map(|(bus_id, vendor_id, product_id, product, class)| {
+        let interface_classes = vec![class.to_owned()];
+        let drivers = vec![if class == "03" { "usbhid" } else { "cdc_acm" }.to_owned()];
+        let (selectable, risk, warning) = classify_device(vendor_id, &interface_classes, &drivers);
+        UsbDevice {
             bus_id: bus_id.to_owned(),
             vendor_id: vendor_id.to_owned(),
             product_id: product_id.to_owned(),
@@ -432,16 +481,16 @@ fn mock_devices(selected: &BTreeSet<String>) -> Vec<UsbDevice> {
             product: Some(product.to_owned()),
             serial_number: None,
             device_class: "00".to_owned(),
-            interface_classes: vec![class.to_owned()],
-            drivers: vec![if class == "03" { "usbhid" } else { "cdc_acm" }.to_owned()],
+            interface_classes,
+            drivers,
             parent_hub: parent_usb_path(bus_id),
             selected: selected.contains(bus_id),
-            selectable: true,
-            risk: "normal".to_owned(),
-            warning: None,
+            selectable,
+            risk: risk.to_owned(),
+            warning: warning.map(str::to_owned),
             status: "available".to_owned(),
-        },
-    )
+        }
+    })
     .collect()
 }
 
@@ -461,4 +510,26 @@ async fn shutdown_signal() {
     #[cfg(not(unix))]
     let terminate = std::future::pending::<()>();
     tokio::select! { _ = ctrl_c => {}, _ = terminate => {} }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::classify_device;
+
+    #[test]
+    fn prohibits_storage_audio_and_video_classes() {
+        for class in ["08", "01", "0e"] {
+            let result = classify_device("1234", &[class.to_owned()], &[]);
+            assert!(!result.0, "class {class} must be prohibited");
+            assert_eq!(result.1, "prohibited");
+        }
+    }
+
+    #[test]
+    fn warns_for_ftdi_vendor() {
+        let result = classify_device("0403", &["ff".to_owned()], &[]);
+        assert!(result.0);
+        assert_eq!(result.1, "caution");
+        assert!(result.2.unwrap().contains("FTDI"));
+    }
 }

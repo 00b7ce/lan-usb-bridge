@@ -40,6 +40,13 @@ pub enum ClientError {
     SessionAlreadyExists,
     #[error("デバイス {0} はサーバーの一覧に存在しないか選択できません")]
     DeviceUnavailable(String),
+    #[error(
+        "デバイス {bus_id} は禁止対象のUSBクラス（{class_name}）を含むため取得・接続できません"
+    )]
+    ProhibitedDevice {
+        bus_id: String,
+        class_name: &'static str,
+    },
 }
 
 pub type Result<T> = std::result::Result<T, ClientError>;
