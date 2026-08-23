@@ -1,0 +1,24 @@
+[Unit]
+Description=LAN USB Bridge privileged host agent
+After=local-fs.target
+Before=usbipd.service
+
+[Service]
+Type=simple
+User=root
+Group=usb-bridge
+RuntimeDirectory=lan-usb-bridge
+RuntimeDirectoryMode=0750
+UMask=0007
+Environment=RUST_LOG=usb_bridge_host_agent=info
+ExecStart=/usr/local/sbin/usb-bridge-host-agent
+Restart=on-failure
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ProtectKernelTunables=no
+RestrictAddressFamilies=AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

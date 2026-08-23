@@ -15,11 +15,17 @@ use axum::{
     response::{Html, IntoResponse},
     routing::{get, post},
 };
+#[cfg(unix)]
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::UnixStream,
+};
 use tokio::{net::TcpListener, sync::RwLock};
 use tracing::{info, warn};
 use usb_bridge_protocol::{
-    AcquireRequest, ErrorResponse, HealthResponse, ReleaseRequest, SelectionRequest,
-    SelectionResponse, Session, SessionResponse, UsbDevice,
+    AcquireRequest, ErrorResponse, HealthResponse, HostControlAction, HostControlRequest,
+    HostControlResponse, ReleaseRequest, SelectionRequest, SelectionResponse, Session,
+    SessionResponse, UsbDevice,
 };
 
 const INDEX_HTML: &str = include_str!("../web/index.html");
@@ -29,6 +35,8 @@ struct AppState {
     backend: String,
     sysfs_root: PathBuf,
     selection_file: PathBuf,
+    control_backend: String,
+    host_agent_socket: PathBuf,
     selected: Arc<RwLock<BTreeSet<String>>>,
     session: Arc<RwLock<Option<Session>>>,
 }
@@ -60,6 +68,14 @@ async fn main() {
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("/data/selection.json"));
     let selected = load_selection(&selection_file);
+    let control_backend = env::var("USB_CONTROL_BACKEND").unwrap_or_else(|_| "mock".to_owned());
+    if control_backend != "mock" && control_backend != "host-agent" {
+        eprintln!("unsupported USB_CONTROL_BACKEND={control_backend}; use mock or host-agent");
+        std::process::exit(2);
+    }
+    let host_agent_socket = env::var("HOST_AGENT_SOCKET")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("/run/lan-usb-bridge/host-agent.sock"));
 
     let listen_address = env::var("LISTEN_ADDRESS").unwrap_or_else(|_| "0.0.0.0:8080".to_owned());
     let address: SocketAddr = listen_address
@@ -70,6 +86,8 @@ async fn main() {
         backend,
         sysfs_root,
         selection_file,
+        control_backend,
+        host_agent_socket,
         selected: Arc::new(RwLock::new(selected)),
         session: Arc::new(RwLock::new(None)),
     };
@@ -252,6 +270,18 @@ async fn acquire(
         )
             .into_response();
     }
+    if requested.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "no USB devices were requested or selected".to_owned(),
+            }),
+        )
+            .into_response();
+    }
+    if let Err(error) = control_devices(&state, HostControlAction::Bind, &requested).await {
+        return (StatusCode::BAD_GATEWAY, Json(ErrorResponse { error })).into_response();
+    }
     let session = Session {
         client_id: request.client_id,
         devices: requested,
@@ -267,6 +297,11 @@ async fn release(
     let mut current = state.session.write().await;
     match current.as_ref() {
         Some(session) if session.client_id == request.client_id => {
+            if let Err(error) =
+                control_devices(&state, HostControlAction::Unbind, &session.devices).await
+            {
+                return (StatusCode::BAD_GATEWAY, Json(ErrorResponse { error })).into_response();
+            }
             *current = None;
             StatusCode::NO_CONTENT.into_response()
         }
@@ -278,6 +313,61 @@ async fn release(
         )
             .into_response(),
         None => StatusCode::NO_CONTENT.into_response(),
+    }
+}
+
+async fn control_devices(
+    state: &AppState,
+    action: HostControlAction,
+    devices: &[String],
+) -> Result<(), String> {
+    if state.control_backend == "mock" {
+        return Ok(());
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (action, devices);
+        return Err("host-agent control is only supported on Unix".to_owned());
+    }
+    #[cfg(unix)]
+    {
+        let mut stream = UnixStream::connect(&state.host_agent_socket)
+            .await
+            .map_err(|error| {
+                format!(
+                    "failed to connect to host agent at {}: {error}",
+                    state.host_agent_socket.display()
+                )
+            })?;
+        let request = HostControlRequest {
+            action,
+            devices: devices.to_vec(),
+        };
+        let mut payload = serde_json::to_vec(&request)
+            .map_err(|error| format!("failed to encode host-agent request: {error}"))?;
+        payload.push(b'\n');
+        stream
+            .write_all(&payload)
+            .await
+            .map_err(|error| format!("failed to write host-agent request: {error}"))?;
+        stream
+            .shutdown()
+            .await
+            .map_err(|error| format!("failed to finish host-agent request: {error}"))?;
+        let mut response = Vec::new();
+        stream
+            .read_to_end(&mut response)
+            .await
+            .map_err(|error| format!("failed to read host-agent response: {error}"))?;
+        let response: HostControlResponse = serde_json::from_slice(&response)
+            .map_err(|error| format!("invalid host-agent response: {error}"))?;
+        if response.success {
+            Ok(())
+        } else {
+            Err(response
+                .error
+                .unwrap_or_else(|| "host agent failed without an error message".to_owned()))
+        }
     }
 }
 

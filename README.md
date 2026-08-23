@@ -28,7 +28,8 @@ cargo run --package usb-bridge-client
 ```
 
 常用構成ではPiのsysfsを読み取り専用で参照し、USBハブを除くUSBデバイスを
-動的に列挙します。USB/IPの`bind`/`unbind`はまだ実行しません。
+動的に列挙します。USB/IPの`bind`/`unbind`は、ホスト上で動作する権限分離された
+`usb-bridge-host-agent`を明示的に有効化した場合だけ実行します。
 
 ## 起動
 

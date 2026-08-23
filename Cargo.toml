@@ -3,6 +3,7 @@ members = [
     "client",
     "crates/protocol",
     "server",
+    "server/host-agent",
 ]
 resolver = "3"
 

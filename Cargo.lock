@@ -1456,6 +1456,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "usb-bridge-host-agent"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "usb-bridge-protocol",
+]
+
+[[package]]
 name = "usb-bridge-protocol"
 version = "0.1.0"
 dependencies = [

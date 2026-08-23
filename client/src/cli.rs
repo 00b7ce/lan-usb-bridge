@@ -94,7 +94,7 @@ pub fn run() -> Result<()> {
             let session = api.acquire(&cfg.client_id, ids.devices)?;
             print_session(Some(&session));
             println!(
-                "注意: サーバーは現時点でUSB/IP bindを実行しません。これは利用権の取得のみです。"
+                "サーバーがhost-agent制御を有効にしている場合、対象デバイスはUSB/IPへexportされています。"
             );
         }
         Command::Release => release_owned(&api, &cfg.client_id)?,

@@ -63,3 +63,22 @@ pub struct SessionResponse {
 pub struct ErrorResponse {
     pub error: String,
 }
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HostControlAction {
+    Bind,
+    Unbind,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct HostControlRequest {
+    pub action: HostControlAction,
+    pub devices: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct HostControlResponse {
+    pub success: bool,
+    pub error: Option<String>,
+}
