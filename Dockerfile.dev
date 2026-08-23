@@ -1,0 +1,14 @@
+FROM rust:bookworm
+
+WORKDIR /workspace
+RUN cargo install cargo-watch --locked \
+    && useradd --uid 1000 --create-home developer \
+    && chown --recursive developer:developer /usr/local/cargo
+
+ENV LISTEN_ADDRESS=0.0.0.0:8080 \
+    RUST_LOG=usb_bridge=debug \
+    USB_BACKEND=mock
+
+EXPOSE 8080
+USER developer
+CMD ["cargo", "watch", "--why", "-x", "run"]

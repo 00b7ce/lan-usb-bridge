@@ -1,0 +1,20 @@
+services:
+  usb-bridge:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+      network: host
+    environment:
+      RUST_LOG: usb_bridge=debug
+      USB_BACKEND: mock
+    volumes:
+      - .:/workspace
+      - cargo_registry:/usr/local/cargo/registry
+      - cargo_git:/usr/local/cargo/git
+      - cargo_target:/workspace/target
+    restart: "no"
+
+volumes:
+  cargo_registry:
+  cargo_git:
+  cargo_target:
