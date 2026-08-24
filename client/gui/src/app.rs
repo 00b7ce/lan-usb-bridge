@@ -33,6 +33,7 @@ pub struct BridgeApp {
     sender: Sender<WorkerMessage>,
     receiver: Receiver<WorkerMessage>,
     shutdown: Arc<AtomicBool>,
+    operation_thread: Option<JoinHandle<()>>,
     log_sender: Option<Sender<String>>,
     log_thread: Option<JoinHandle<()>>,
     log_path: Option<String>,
@@ -55,6 +56,7 @@ impl BridgeApp {
             sender,
             receiver,
             shutdown: Arc::new(AtomicBool::new(false)),
+            operation_thread: None,
             log_sender,
             log_thread,
             log_path,
@@ -96,7 +98,7 @@ impl BridgeApp {
         let sender = self.sender.clone();
         let shutdown = self.shutdown.clone();
         let target_count = devices.len();
-        thread::spawn(move || {
+        self.operation_thread = Some(thread::spawn(move || {
             let usbip = WindowsUsbip::new(config.usbip_path.clone(), false);
             let progress_sender = sender.clone();
             let result =
@@ -114,7 +116,7 @@ impl BridgeApp {
                 .map_err(|error| error.to_string());
             let _ = sender.send(WorkerMessage::OperationFinished(result));
             ctx.request_repaint();
-        });
+        }));
     }
 
     fn spawn_disconnect(&mut self, ctx: egui::Context, devices: Vec<String>) {
@@ -125,7 +127,7 @@ impl BridgeApp {
         self.state.last_error = None;
         let sender = self.sender.clone();
         let target_count = devices.len();
-        thread::spawn(move || {
+        self.operation_thread = Some(thread::spawn(move || {
             let usbip = WindowsUsbip::new(config.usbip_path.clone(), false);
             let progress_sender = sender.clone();
             let result = connection::disconnect_group(&config, &usbip, &devices, |message| {
@@ -142,7 +144,7 @@ impl BridgeApp {
             .map_err(|error| error.to_string());
             let _ = sender.send(WorkerMessage::OperationFinished(result));
             ctx.request_repaint();
-        });
+        }));
     }
 
     fn spawn_save(&mut self, ctx: egui::Context, new_config: Config) {
@@ -196,6 +198,7 @@ impl BridgeApp {
                     self.log(progress);
                 }
                 WorkerMessage::OperationFinished(result) => {
+                    self.join_operation_thread();
                     self.state.busy = false;
                     match result {
                         Ok(message) => {
@@ -253,6 +256,12 @@ impl BridgeApp {
         }
         ctx.request_repaint_after(interval);
     }
+
+    fn join_operation_thread(&mut self) {
+        if let Some(thread) = self.operation_thread.take() {
+            let _ = thread.join();
+        }
+    }
 }
 
 impl eframe::App for BridgeApp {
@@ -293,6 +302,25 @@ impl eframe::App for BridgeApp {
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         self.shutdown.store(true, Ordering::Release);
+        self.join_operation_thread();
+
+        if let Some(config) = self.state.config.clone() {
+            let usbip = WindowsUsbip::new(config.usbip_path.clone(), false);
+            let mut messages = Vec::new();
+            let result = connection::disconnect_owned(&config, &usbip, |message| {
+                messages.push(message);
+            });
+            for message in messages {
+                self.log(message);
+            }
+            match result {
+                Ok(()) => self.log("終了時にUSBデバイスを切断しました".into()),
+                Err(error) => self.log(format!(
+                    "ERROR: 終了時のUSBデバイス切断に失敗しました: {error}"
+                )),
+            }
+        }
+
         self.log_sender.take();
         if let Some(thread) = self.log_thread.take() {
             let _ = thread.join();

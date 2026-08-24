@@ -28,6 +28,7 @@ Implemented features include:
 - Validated `usbip bind` and `usbip unbind` operations only
 - One exclusive client session with incremental acquire and partial release
 - Individual and checkbox-based batch attach/detach in the Windows GUI
+- Automatic detach and session release on normal GUI exit
 - USB topology grouping for display without product-specific bundle rules
 - Rollback after multi-device attach failure
 - Automatic restoration of remaining Windows attachments when usbip-win2 drops more
@@ -239,7 +240,9 @@ entire session. An empty acquire array uses the selection saved by the Web UI.
 - USB/IP traffic on TCP 3240 is not encrypted by this project.
 - Session state is held in memory. Server restarts can forget a session while a device
   remains bound.
-- There is no lease, heartbeat, or automatic server-side release after a client crash.
+- A normal GUI exit detaches devices and releases its session. There is no lease,
+  heartbeat, or automatic server-side release after forced termination, a client
+  crash, or power loss.
 - Hot-unplug and reconnect recovery is not complete.
 - Only one client ID can own a server session at a time, although that session can
   contain multiple devices.

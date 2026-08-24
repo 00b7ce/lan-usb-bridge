@@ -210,6 +210,25 @@ where
     }
 }
 
+/// Detach every device owned by this client and release its server session.
+///
+/// This is intended for graceful client shutdown, where the caller may not
+/// have a current UI snapshot of the devices in the session.
+pub fn disconnect_owned<F>(config: &Config, usbip: &dyn UsbipRunner, progress: F) -> Result<()>
+where
+    F: FnMut(String),
+{
+    let api = ApiClient::new(config.server_url.clone())?;
+    let Some(session) = api.session()?.session else {
+        return Ok(());
+    };
+    if session.client_id != config.client_id {
+        return Err(ClientError::SessionOwnedByOther(session.client_id));
+    }
+
+    disconnect_group(config, usbip, &session.devices, progress)
+}
+
 fn wait_for_port(usbip: &dyn UsbipRunner, bus_id: &str, cancelled: &AtomicBool) -> Result<bool> {
     for _ in 0..10 {
         if cancelled.load(Ordering::Acquire) {
@@ -616,6 +635,23 @@ mod tests {
                 .unwrap()
                 .iter()
                 .any(|request| request == "POST /api/release")
+        );
+    }
+
+    #[test]
+    fn disconnect_owned_uses_the_current_server_session() {
+        let (base, requests) = api_server(true, 3);
+        let usbip = MockUsbip::new(false, false);
+
+        disconnect_owned(&config(base), &usbip, |_| {}).unwrap();
+
+        assert_eq!(
+            usbip.calls.lock().unwrap().as_slice(),
+            ["stop:1-2", "detach:1-2"]
+        );
+        assert_eq!(
+            requests.lock().unwrap().as_slice(),
+            ["GET /api/session", "GET /api/session", "POST /api/release"]
         );
     }
 
