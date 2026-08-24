@@ -1,39 +1,80 @@
-# Server host integration
+# Server Host Integration
 
-`usb-bridge-host-agent`だけをrootでホスト上に置き、Unixソケット経由で検証済みの
-USB BUS IDに対する`usbip bind/unbind`だけを許可します。Web/APIコンテナは非rootの
-まま動作します。
+`usb-bridge-host-agent` is the only LAN USB Bridge component that runs as root. It
+listens on a Unix socket and permits only `usbip bind` and `usbip unbind` for validated
+USB bus IDs. The Web/API container remains non-root.
 
-## ビルドと配置
+## Build and install
+
+Run from the repository root on the Linux host:
 
 ```bash
 sudo groupadd --system --force usb-bridge
 sudo usermod --append --groups usb-bridge "$USER"
+
 docker run --rm -v "$PWD:/workspace" -w /workspace rust:bookworm \
   cargo build --release --locked --package usb-bridge-host-agent
+
 sudo install -o root -g root -m 0755 \
   target/release/usb-bridge-host-agent /usr/local/sbin/
 sudo install -o root -g root -m 0644 \
   server/host/usb-bridge-host-agent.service server/host/usbipd.service \
   /etc/systemd/system/
+
 sudo systemctl daemon-reload
 sudo systemctl enable --now usb-bridge-host-agent.service usbipd.service
 ```
 
-`usb-bridge`グループのGIDを確認し、Composeの`USB_BRIDGE_GID`と一致させます。
+Verify both services:
+
+```bash
+systemctl --no-pager --full status \
+  usb-bridge-host-agent.service usbipd.service
+```
+
+## Container permissions
+
+Find the numeric GID of the restricted group:
 
 ```bash
 getent group usb-bridge
 ```
 
-表示された数値GIDを`.env`へ設定してください。グループ追加を現在のシェルへ反映するには、
-再ログインが必要です。
-
-ホストエージェントと実転送を有効にするには`.env`へ追加します。
+Set the same numeric GID and enable real USB control in `.env`:
 
 ```dotenv
 USB_CONTROL_BACKEND=host-agent
-USB_BRIDGE_GID=<usb-bridgeグループのGID>
+USB_BRIDGE_GID=983
 ```
 
-TCP 3240は信頼できるLANからだけ到達可能にし、インターネットへ公開しないでください。
+Replace `983` with the value from the host. Sign out and back in after adding your user
+to the group so the current shell receives the new membership.
+
+## Runtime paths and commands
+
+- Unix socket: `/run/lan-usb-bridge/host-agent.sock`
+- Host executable: `/usr/local/sbin/usb-bridge-host-agent`
+- Linux USB/IP utility: `/usr/sbin/usbip`
+- USB/IP daemon: `/usr/sbin/usbipd --ipv4`
+
+The host agent validates that each request:
+
+- Contains at least one device
+- Uses a kernel-style bus ID containing only digits, `-`, and `.`
+- Refers to a present USB device rather than an interface or hub
+- Does not contain a mass-storage, audio, or video interface
+- Requests only bind or unbind
+
+TCP 3240 should be reachable only from trusted LAN clients and must not be published to
+the Internet.
+
+## Diagnostics
+
+```bash
+/usr/sbin/usbip list -l
+ss -lntp | grep ':3240'
+journalctl -u usb-bridge-host-agent.service -u usbipd.service
+```
+
+Before manually running `usbip unbind`, confirm the exact bus ID and stop applications
+using the remote device.

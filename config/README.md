@@ -1,8 +1,13 @@
-# Configuration
+# Configuration Data
 
-USBデバイスは`/sys/bus/usb/devices`から動的に列挙します。固定のデバイス一覧は不要です。
+USB devices are enumerated dynamically from `/sys/bus/usb/devices`; no fixed device
+inventory is required.
 
-Web UIで保存した選択は`../data/selection.json`へ自動保存されます。このファイルには
-現在選択しているUSB Bus IDだけが入り、Gitの管理対象には含めません。
+The server Web UI stores its selected USB bus IDs in `../data/selection.json`. This
+runtime file is excluded from Git. An acquire request with an empty `devices` array uses
+the saved selection.
 
-将来、シリアル番号やVID/PIDを使った再識別規則と、安全性ポリシーをこのディレクトリへ追加します。
+Bus IDs describe the current USB topology and can change when a device is moved to a
+different port. Persistent matching by serial number or VID/PID is not implemented.
+Future server-side identification or policy configuration can be added under this
+directory.

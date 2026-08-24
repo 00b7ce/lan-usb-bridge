@@ -1,99 +1,133 @@
 # LAN USB Bridge Windows Client
 
-LAN USB Bridgeサーバーの利用権管理APIと、Windows用USB/IPクライアント
-[usbip-win2](https://github.com/vadimgrn/usbip-win2) を扱うCLIです。
-
-クライアントは共通coreライブラリ、CLI、WindowsネイティブGUIで構成されています。
+The Windows client combines the LAN USB Bridge session-management API with
+[usbip-win2](https://github.com/vadimgrn/usbip-win2). It is split into a shared core
+library, a command-line client, and a native Windows GUI.
 
 ```text
 client/
-├── core/   API・設定・デバイスポリシー・USB/IP・接続制御
-├── gui/    egui + eframe + glowによるWindows GUI
+├── core/   API, configuration, device policy, USB/IP, and connection control
+├── gui/    Native egui + eframe + glow GUI
 └── src/    CLI
 ```
 
-> 現在のサーバーはUSBデバイス列挙とセッション管理までです。Linux側の
-> `usbip bind` / `unbind` や `usbipd` の公開処理はまだ実装されていません。
-> そのため、本CLIだけで実機USB転送が完結する段階ではありません。
+The server must run with `usb-bridge-host-agent` and `usbipd` enabled for real USB
+transfers. usbip-win2 0.9.7.7 is the currently verified Windows client version.
 
-## 必要環境とビルド
+## Requirements
 
-- Rust（Rust 2024 edition対応のstable toolchain）
-- Windows 10 x64 version 1903以降、またはusbip-win2対応のWindows 11 ARM64
-- LAN USB BridgeサーバーへのHTTP(S)接続
-- USB転送にはusbip-win2と対応ドライバー
+- Rust stable with Rust 2024 edition support
+- Windows 10 x64 version 1903 or later, or a usbip-win2-supported Windows 11 ARM64 system
+- HTTP access to the LAN USB Bridge server
+- usbip-win2 and its drivers for USB transfer
+
+Build release binaries:
 
 ```powershell
 cargo build --release --package usb-bridge-client
 cargo build --release --package usb-bridge-gui
 ```
 
-生成物は `target\release\usb-bridge-client.exe` と `target\release\usb-bridge-gui.exe` です。
-GUIのreleaseビルドはコンソールウィンドウを表示しません。
+Artifacts:
 
-## Windows GUI
+```text
+target\release\usb-bridge-client.exe
+target\release\usb-bridge-gui.exe
+```
+
+The release GUI does not open a console window.
+
+## Native GUI
 
 ```powershell
 cargo run --release --package usb-bridge-gui
 ```
 
-- Windows 11向けダークテーマ
-- 各USBデバイスの個別接続・切断
-- チェックボックスで選択したデバイスの一括接続・一括切断
-- USBハブ配下は配置だけをまとめて表示し、製品種別に関係なく各デバイスを個別操作
-- 利用可能、接続中、WARNING、禁止、他PC使用中、エラーを色・アイコン・文字で表示
-- HTTP、usbip.exe、待機、設定保存、ログ書き込みはワーカースレッドで実行
-- 5秒間隔で状態更新し、最小化・非表示時は20秒へ低下
-- Local AppData配下に最大1 MiBのログと1世代のローテーションを保存
+The GUI provides:
 
-GUIはeframe 0.36.1の `accesskit`、`default_fonts`、`glow` featureだけを使用します。
-描画はOpenGL系のglowで、WebView、WASM、wgpu、Node.jsを使用しません。日本語表示には
-Windows標準のYu Gothic、Meiryo、MS Gothicを順に検索して利用します。
+- Compact Windows-native dark UI
+- Individual attach and detach controls for every USB device
+- Checkbox-based batch attach and detach
+- USB topology grouping for display only; devices under a hub remain individually controlled
+- Statuses for available, attached, warning, blocked, owned by another PC, and errors
+- Background workers for HTTP, `usbip.exe`, wait operations, settings, and log writes
+- Five-second refresh while visible and twenty-second refresh while hidden or minimized
+- Rotating per-user logs with a 1 MiB limit and one retained generation
 
-## usbip-win2の準備
+The renderer uses the `accesskit`, `default_fonts`, and `glow` features of eframe
+0.36.1. It does not use WebView, WASM, wgpu, or Node.js. Japanese UI text uses the
+first available Windows font from Yu Gothic, Meiryo, and MS Gothic.
 
-1. [usbip-win2公式Releases](https://github.com/vadimgrn/usbip-win2/releases) の案内に従ってインストールします。
-2. 公式READMEの注意どおり、事前にWindowsの復元ポイントを作成してください。インストール中はUSBデバイスが一時的に再起動します。
-3. `usbip.exe` をPATHへ追加するか、`--usbip-path "C:\Program Files\USBip\usbip.exe"` で指定します。
+## Installing usbip-win2
 
-本クライアントが使う公式CLI形式は `list -r HOST`、`attach -r HOST -b BUS_ID`、
-`port`、`detach -p PORT` です。`detach BUS_ID` は `port` 出力から対応ポートを検索します。
+1. Follow the instructions in the
+   [official usbip-win2 releases](https://github.com/vadimgrn/usbip-win2/releases).
+2. Create a Windows restore point first. Installing the driver temporarily restarts
+   USB devices.
+3. Add `usbip.exe` to `PATH`, or configure an absolute path such as
+   `C:\Program Files\USBip\usbip.exe`.
 
-## 設定
+The current test environment works with usbip-win2 0.9.7.7. Version 0.9.7.8 did not
+work with the tested Atom-S3 device, although that does not establish a universal
+0.9.7.8 incompatibility.
 
-初回起動時にユーザー別設定ディレクトリへ `config.json` を作り、ランダムな
-`client_id` を永続化します。Windowsでは通常 `%APPDATA%\lan-usb-bridge\LAN USB Bridge\config\config.json`
-相当です（実際のパスはWindowsのKnown Folderに従います）。
+The client uses these usbip-win2 operations:
+
+```text
+list -r HOST
+attach -r HOST -b BUS_ID
+attach -r HOST -b BUS_ID --stop
+port
+detach -p PORT
+```
+
+The application resolves a remote bus ID to a Windows USB/IP port from `usbip.exe port`
+before detaching. In the tested 0.9.7.7 environment, detaching one port could also drop
+other imported ports. The client immediately reattaches devices that remain in the
+server session.
+
+## Configuration
+
+The first run creates `config.json` in the per-user configuration directory and stores
+a generated `client_id`. On Windows the normal location is:
+
+```text
+%APPDATA%\lan-usb-bridge\LAN USB Bridge\config\config.json
+```
+
+Example:
 
 ```json
 {
-  "server_url": "http://192.168.1.20:8080",
+  "server_url": "http://192.168.10.8:8080/",
   "client_id": "gaming-pc-1",
   "usbip_path": "C:\\Program Files\\USBip\\usbip.exe"
 }
 ```
 
-優先順位はコマンドライン、環境変数、設定ファイル、既定値です。
+Configuration precedence is command line, environment, configuration file, then the
+default value.
 
-| 設定 | コマンドライン | 環境変数 | 既定値 |
+| Setting | Command line | Environment | Default |
 |---|---|---|---|
 | Server URL | `--server-url` | `USB_BRIDGE_SERVER_URL` | `http://127.0.0.1:8080` |
-| Client ID | `--client-id` | `USB_BRIDGE_CLIENT_ID` | 永続生成 |
-| usbip.exe | `--usbip-path` | `USB_BRIDGE_USBIP_PATH` | `usbip.exe` (PATH検索) |
+| Client ID | `--client-id` | `USB_BRIDGE_CLIENT_ID` | Persisted generated value |
+| usbip.exe | `--usbip-path` | `USB_BRIDGE_USBIP_PATH` | `usbip.exe` from `PATH` |
 
-TLS証明書検証は無効化しません。USB/IP接続先にはServer URLのホストだけを使います。
+TLS certificate validation is not disabled. The USB/IP host is always derived from the
+configured server URL.
 
-### デバイスポリシー
+## Device policy
 
-- USB Mass Storage（interface class `08`）は禁止
-- USB Audio（interface class `01`）は禁止
-- USB Video（interface class `0e`）は禁止
-- FTDI（vendor ID `0403`）はusbip-win2の既知の互換性問題があるためWARNING
+- USB mass storage, interface class `08`: blocked
+- USB audio, interface class `01`: blocked
+- USB video, interface class `0e`: blocked
+- FTDI, vendor ID `0403`: allowed with a compatibility warning
 
-禁止デバイスは一覧には理由付きで表示しますが、APIのacquireとUSB/IP attachを拒否します。
-複合デバイスは、いずれかのインターフェースが禁止クラスならデバイス全体を禁止します。
+If any interface of a composite device is blocked, the entire device is blocked. A
+blocked device remains visible with its reason, but acquire and attach are disabled.
 
-## CLI例
+## CLI examples
 
 ```powershell
 usb-bridge-client health
@@ -103,34 +137,38 @@ usb-bridge-client acquire 1-1.2 1-1.3
 usb-bridge-client release
 usb-bridge-client usbip status
 usb-bridge-client usbip list
-usb-bridge-client usbip attach 1-1.2
-usb-bridge-client usbip detach 1-1.2
-usb-bridge-client --dry-run usbip attach 1-1.2
+usb-bridge-client usbip attach 2-2
+usb-bridge-client usbip detach 2-2
+usb-bridge-client --dry-run usbip attach 2-2
 ```
 
-`usbip attach` はデバイスを確認し、APIのacquire成功後だけ実行します。attach失敗時は
-セッションをベストエフォートで解放します。別client_idのセッションを強制取得・解放しません。
+`usbip attach` validates the device, acquires it through the API, and then runs
+usbip-win2. An attach failure triggers best-effort rollback. The same client can add
+devices to its session and release selected devices. A different `client_id` cannot
+forcefully acquire or release the current session.
 
-## 管理者権限
+## Administrator privileges
 
-usbip-win2のインストールとドライバー操作には管理者権限が必要です。環境によって
-attach/detachにも昇格が必要です。アクセス拒否を検出すると、管理者としてWindows
-Terminalを起動し直す案内を表示します。API参照コマンドには不要です。
+Installing usbip-win2 and managing its drivers requires administrator privileges.
+Depending on the system, attach and detach may also require elevation. When the client
+detects access denial, it suggests restarting Windows Terminal as administrator.
+Read-only API commands do not normally require elevation.
 
-## 未実装
+## Known limitations
 
-- GUI、常駐、自動再接続
-- 認証・トークン（現行サーバーAPIにも未実装）
-- Linuxサーバー側のUSB/IP bind/unbindとusbipd公開制御
-- 複数デバイスの一括attachと途中失敗時の完全なロールバック
-- usbip-win2の永続再接続（stash）管理
+- The server API has no authentication or access token.
+- There is no server-side lease or automatic release after a client crash.
+- Hot-unplug and reconnect recovery is not complete.
+- usbip-win2 persistent-device stash management is not implemented.
+- Device compatibility depends on both usbip-win2 and the device driver stack.
 
-## トラブルシューティング
+## Troubleshooting
 
-- `usbip-win2が見つかりません`: PATHまたは `--usbip-path` を確認します。
-- `接続できません`: Server URL、PiのIP、ポート、ファイアウォールを確認します。
-- `HTTP 409`: 別セッションが使用中です。強制取得はしません。
-- `usbip list` に表示されない: 現行サーバーはbindを行いません。Pi側でのUSB/IP公開が別途必要です。
-- `attach` がアクセス拒否: 管理者としてWindows Terminalを起動します。
-- ストレージ機器: detach前に書き込みを止め、安全に取り外せる状態を確認します。
-- 実行予定だけ確認する: `--dry-run` を使います。APIのacquire/releaseも変更しません。
+- **usbip-win2 is not found:** Check `PATH` or the configured `usbip_path`.
+- **The server is unreachable:** Check the server URL, Pi address, port, and firewall.
+- **HTTP 409:** Another client ID owns the session; the client does not steal it.
+- **`usbip list` is empty:** Check the host agent, `usbipd`, TCP 3240, and the API acquire result.
+- **Attach is denied:** Run the Windows client from an elevated terminal.
+- **A device enumerates but does not work:** Check the usbip-win2 version, Device Manager,
+  `usbip.exe port`, and the server logs.
+- **Preview operations only:** Use `--dry-run`; it does not acquire or release API state.
