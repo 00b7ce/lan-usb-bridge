@@ -132,6 +132,18 @@ where
             }
         }
         attached.push(device.bus_id.clone());
+        if let Err(error) = api.heartbeat(&config.client_id) {
+            rollback(
+                &api,
+                usbip,
+                host,
+                &config.client_id,
+                &bus_ids,
+                &attached,
+                None,
+            );
+            return Err(error);
+        }
     }
     progress("接続しました".into());
     Ok(session)
@@ -465,6 +477,14 @@ mod tests {
         session_body: &'static str,
         request_count: usize,
     ) -> (String, Arc<Mutex<Vec<String>>>) {
+        api_server_with_session_and_heartbeat(session_body, request_count, 204)
+    }
+
+    fn api_server_with_session_and_heartbeat(
+        session_body: &'static str,
+        request_count: usize,
+        heartbeat_status: u16,
+    ) -> (String, Arc<Mutex<Vec<String>>>) {
         let server = Server::http("127.0.0.1:0").unwrap();
         let address = format!("http://{}/", server.server_addr());
         let requests = Arc::new(Mutex::new(Vec::new()));
@@ -480,6 +500,9 @@ mod tests {
                     (&Method::Get, "/api/session") => (200, session_body),
                     (&Method::Post, "/api/acquire") => {
                         (201, r#"{"client_id":"client-a","devices":["1-2","1-3"]}"#)
+                    }
+                    (&Method::Post, "/api/heartbeat") => {
+                        (heartbeat_status, r#"{"error":"heartbeat failed"}"#)
                     }
                     (&Method::Post, "/api/release") => (204, ""),
                     _ => (404, r#"{"error":"missing"}"#),
@@ -544,7 +567,7 @@ mod tests {
 
     #[test]
     fn attaches_all_devices_in_a_multi_device_request() {
-        let (base, _) = api_server(false, 2);
+        let (base, _) = api_server(false, 5);
         let usbip = MockUsbip::new(false, false);
         let devices = [
             device_with_id("1-1.2.1"),
@@ -569,7 +592,7 @@ mod tests {
 
     #[test]
     fn adds_a_device_to_a_session_owned_by_the_same_client() {
-        let (base, _) = api_server(true, 2);
+        let (base, _) = api_server(true, 3);
         let usbip = MockUsbip::new(false, false);
 
         let session = connect_group(
@@ -587,7 +610,7 @@ mod tests {
 
     #[test]
     fn second_device_failure_rolls_back_first_device() {
-        let (base, requests) = api_server(false, 3);
+        let (base, requests) = api_server(false, 4);
         let usbip = MockUsbip::failing_on("1-1.2.2");
         let devices = [
             device_with_id("1-1.2.1"),
@@ -614,6 +637,34 @@ mod tests {
                 "stop:1-1.2.1",
                 "detach:1-1.2.1"
             ]
+        );
+        assert!(
+            requests
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|request| request == "POST /api/release")
+        );
+    }
+
+    #[test]
+    fn heartbeat_failure_rolls_back_attached_devices() {
+        let (base, requests) = api_server_with_session_and_heartbeat(r#"{"session":null}"#, 4, 500);
+        let usbip = MockUsbip::new(false, false);
+
+        assert!(
+            connect_group(
+                &config(base),
+                &usbip,
+                &[device()],
+                &AtomicBool::new(false),
+                |_| {},
+            )
+            .is_err()
+        );
+        assert_eq!(
+            usbip.calls.lock().unwrap().as_slice(),
+            ["attach:1-2", "stop:1-2", "detach:1-2"]
         );
         assert!(
             requests

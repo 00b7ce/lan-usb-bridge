@@ -220,6 +220,12 @@ impl BridgeApp {
                     }
                     Err(error) => self.fail(error),
                 },
+                WorkerMessage::HeartbeatFinished(result) => {
+                    self.state.heartbeat_in_flight = false;
+                    if let Err(error) = result {
+                        self.log(format!("ERROR: heartbeat failed: {error}"));
+                    }
+                }
             }
         }
         if refresh_after && !self.state.busy {
@@ -257,6 +263,41 @@ impl BridgeApp {
         ctx.request_repaint_after(interval);
     }
 
+    fn maybe_heartbeat(&mut self, ctx: &egui::Context) {
+        const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
+
+        if self.state.heartbeat_in_flight
+            || self.state.last_heartbeat.elapsed() < HEARTBEAT_INTERVAL
+        {
+            ctx.request_repaint_after(HEARTBEAT_INTERVAL);
+            return;
+        }
+        let Some(config) = self.state.config.clone() else {
+            return;
+        };
+        let owns_session = self
+            .state
+            .snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.session.as_ref())
+            .is_some_and(|session| session.client_id == config.client_id);
+        if !owns_session {
+            return;
+        }
+
+        self.state.heartbeat_in_flight = true;
+        self.state.last_heartbeat = Instant::now();
+        let sender = self.sender.clone();
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            let result = usb_bridge_client_core::api::ApiClient::new(config.server_url.clone())
+                .and_then(|api| api.heartbeat(&config.client_id))
+                .map_err(|error| error.to_string());
+            let _ = sender.send(WorkerMessage::HeartbeatFinished(result));
+            ctx.request_repaint();
+        });
+    }
+
     fn join_operation_thread(&mut self) {
         if let Some(thread) = self.operation_thread.take() {
             let _ = thread.join();
@@ -268,6 +309,7 @@ impl eframe::App for BridgeApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.handle_messages(ctx);
         self.maybe_poll(ctx);
+        self.maybe_heartbeat(ctx);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {

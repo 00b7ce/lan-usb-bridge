@@ -10,6 +10,7 @@ The protocol currently covers:
 - Exclusive client sessions
 - Incremental device acquire
 - Partial or full device release
+- Client heartbeat requests for session lease renewal
 - Restricted host-agent bind/unbind requests
 
 Changes to serialized fields must preserve compatibility where practical. For example,

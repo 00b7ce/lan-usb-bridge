@@ -4,8 +4,8 @@ use reqwest::blocking::{Client, RequestBuilder, Response};
 use serde::{Serialize, de::DeserializeOwned};
 use url::Url;
 use usb_bridge_protocol::{
-    AcquireRequest, ErrorResponse, HealthResponse, ReleaseRequest, Session, SessionResponse,
-    UsbDevice,
+    AcquireRequest, ErrorResponse, HealthResponse, HeartbeatRequest, ReleaseRequest, Session,
+    SessionResponse, UsbDevice,
 };
 
 use crate::error::{ClientError, Result};
@@ -48,6 +48,15 @@ impl ApiClient {
 
     pub fn release(&self, client_id: &str) -> Result<()> {
         self.release_devices(client_id, Vec::new())
+    }
+
+    pub fn heartbeat(&self, client_id: &str) -> Result<()> {
+        let response = self.send(self.http.post(self.endpoint("api/heartbeat")?).json(
+            &HeartbeatRequest {
+                client_id: client_id.into(),
+            },
+        ))?;
+        self.ensure_success(response).map(|_| ())
     }
 
     pub fn release_devices(&self, client_id: &str, devices: Vec<String>) -> Result<()> {

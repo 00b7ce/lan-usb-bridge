@@ -6,4 +6,5 @@ pub enum WorkerMessage {
     Progress(String),
     OperationFinished(Result<String, String>),
     ConfigSaved(Result<Config, String>),
+    HeartbeatFinished(Result<(), String>),
 }

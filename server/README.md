@@ -12,6 +12,7 @@ controlled USB/IP export through a privileged host agent.
 - Allow one client ID to own a session containing one or more devices
 - Add devices to an existing session owned by the same client
 - Release selected devices or the whole session
+- Expire inactive sessions and automatically unbind their devices
 - Delegate validated `usbip bind` and `usbip unbind` operations to the host agent
 
 The API process does not run arbitrary privileged commands. With
@@ -58,12 +59,18 @@ GET  /api/devices
 POST /api/selection
 GET  /api/session
 POST /api/acquire
+POST /api/heartbeat
 POST /api/release
 ```
 
 An empty acquire device list uses the saved Web UI selection. Repeated acquire calls
 from the current owner add devices. A release request with device IDs removes only
 those devices; an empty list releases the full session.
+
+The current owner sends a heartbeat while its GUI is running. Acquiring devices and
+partial releases also renew the lease. If no heartbeat arrives before
+`SESSION_LEASE_SECONDS`, the server unbinds every device in the session and releases
+ownership. A failed unbind keeps the session so cleanup can be retried.
 
 ## Environment variables
 
@@ -75,6 +82,7 @@ those devices; an empty list releases the full session.
 | `USB_SYSFS_ROOT` | `/host/sys/bus/usb/devices` | Mounted sysfs path |
 | `HOST_AGENT_SOCKET` | `/run/lan-usb-bridge/host-agent.sock` | Host-agent Unix socket |
 | `SELECTION_FILE` | `/data/selection.json` | Saved Web UI selection |
+| `SESSION_LEASE_SECONDS` | `45` | Inactivity timeout before automatic release |
 | `RUST_LOG` | `usb_bridge_server=info` in Compose | Logging filter |
 
 Compose additionally uses `USB_BRIDGE_BIND_ADDRESS`, `USB_BRIDGE_PORT`,
@@ -94,7 +102,7 @@ Compose additionally uses `USB_BRIDGE_BIND_ADDRESS`, `USB_BRIDGE_PORT`,
 ## Known limitations
 
 - Session state is in memory and is not recovered after a server restart.
-- A client crash does not currently expire or release its session automatically.
+- Lease expiration depends on the server and host agent remaining operational.
 - A restart can leave kernel USB/IP bind state inconsistent with the in-memory session.
 - Hot-unplug recovery is incomplete.
 - The API has no authentication or TLS.

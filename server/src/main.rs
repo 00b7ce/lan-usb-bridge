@@ -5,7 +5,7 @@ use std::{
     net::{SocketAddr, TcpStream},
     path::{Path, PathBuf},
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use axum::{
@@ -23,8 +23,8 @@ use tokio::{
 use tokio::{net::TcpListener, sync::RwLock};
 use tracing::{info, warn};
 use usb_bridge_protocol::{
-    AcquireRequest, ErrorResponse, HealthResponse, HostControlAction, ReleaseRequest,
-    SelectionRequest, SelectionResponse, Session, SessionResponse, UsbDevice,
+    AcquireRequest, ErrorResponse, HealthResponse, HeartbeatRequest, HostControlAction,
+    ReleaseRequest, SelectionRequest, SelectionResponse, Session, SessionResponse, UsbDevice,
 };
 #[cfg(unix)]
 use usb_bridge_protocol::{HostControlRequest, HostControlResponse};
@@ -40,7 +40,14 @@ struct AppState {
     #[cfg(unix)]
     host_agent_socket: PathBuf,
     selected: Arc<RwLock<BTreeSet<String>>>,
-    session: Arc<RwLock<Option<Session>>>,
+    session: Arc<RwLock<Option<ActiveSession>>>,
+    lease_timeout: Duration,
+}
+
+#[derive(Clone)]
+struct ActiveSession {
+    session: Session,
+    last_heartbeat: Instant,
 }
 
 #[tokio::main]
@@ -84,6 +91,7 @@ async fn main() {
     let address: SocketAddr = listen_address
         .parse()
         .unwrap_or_else(|error| panic!("invalid LISTEN_ADDRESS {listen_address:?}: {error}"));
+    let lease_timeout = env_duration_seconds("SESSION_LEASE_SECONDS", 45);
 
     let state = AppState {
         backend,
@@ -94,6 +102,7 @@ async fn main() {
         host_agent_socket,
         selected: Arc::new(RwLock::new(selected)),
         session: Arc::new(RwLock::new(None)),
+        lease_timeout,
     };
 
     let app = Router::new()
@@ -103,8 +112,11 @@ async fn main() {
         .route("/api/selection", post(save_selection))
         .route("/api/session", get(get_session))
         .route("/api/acquire", post(acquire))
+        .route("/api/heartbeat", post(heartbeat))
         .route("/api/release", post(release))
-        .with_state(state);
+        .with_state(state.clone());
+
+    let lease_task = tokio::spawn(expire_sessions(state));
 
     let listener = TcpListener::bind(address)
         .await
@@ -114,6 +126,20 @@ async fn main() {
         .with_graceful_shutdown(shutdown_signal())
         .await
         .expect("HTTP server failed");
+    lease_task.abort();
+}
+
+fn env_duration_seconds(name: &str, default: u64) -> Duration {
+    let seconds = env::var(name)
+        .map(|value| {
+            value
+                .parse::<u64>()
+                .ok()
+                .filter(|seconds| *seconds > 0)
+                .unwrap_or_else(|| panic!("invalid {name}={value:?}; use a positive integer"))
+        })
+        .unwrap_or(default);
+    Duration::from_secs(seconds)
 }
 
 fn run_healthcheck() {
@@ -213,8 +239,44 @@ async fn save_selection(
 
 async fn get_session(State(state): State<AppState>) -> Json<SessionResponse> {
     Json(SessionResponse {
-        session: state.session.read().await.clone(),
+        session: state
+            .session
+            .read()
+            .await
+            .as_ref()
+            .map(|active| active.session.clone()),
     })
+}
+
+async fn heartbeat(
+    State(state): State<AppState>,
+    Json(request): Json<HeartbeatRequest>,
+) -> impl IntoResponse {
+    if request.client_id.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "client_id must not be empty".to_owned(),
+            }),
+        )
+            .into_response();
+    }
+
+    let mut current = state.session.write().await;
+    match current.as_mut() {
+        Some(active) if active.session.client_id == request.client_id => {
+            active.last_heartbeat = Instant::now();
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Some(_) => (
+            StatusCode::CONFLICT,
+            Json(ErrorResponse {
+                error: "session is owned by another client".to_owned(),
+            }),
+        )
+            .into_response(),
+        None => StatusCode::NO_CONTENT.into_response(),
+    }
 }
 
 async fn acquire(
@@ -274,8 +336,8 @@ async fn acquire(
             .into_response();
     }
     let mut current = state.session.write().await;
-    if let Some(session) = current.as_ref()
-        && session.client_id != request.client_id
+    if let Some(active) = current.as_ref()
+        && active.session.client_id != request.client_id
     {
         return (
             StatusCode::CONFLICT,
@@ -287,7 +349,7 @@ async fn acquire(
     }
     let already_acquired: BTreeSet<&str> = current
         .as_ref()
-        .map(|session| session.devices.iter().map(String::as_str).collect())
+        .map(|active| active.session.devices.iter().map(String::as_str).collect())
         .unwrap_or_default();
     let additions: Vec<String> = requested
         .into_iter()
@@ -296,23 +358,27 @@ async fn acquire(
         .into_iter()
         .collect();
     if additions.is_empty() {
-        return (
-            StatusCode::OK,
-            Json(current.as_ref().expect("existing session").clone()),
-        )
-            .into_response();
+        let active = current.as_mut().expect("existing session");
+        active.last_heartbeat = Instant::now();
+        return (StatusCode::OK, Json(active.session.clone())).into_response();
     }
     if let Err(error) = control_devices(&state, HostControlAction::Bind, &additions).await {
         return (StatusCode::BAD_GATEWAY, Json(ErrorResponse { error })).into_response();
     }
-    let mut session = current.clone().unwrap_or(Session {
-        client_id: request.client_id,
-        devices: Vec::new(),
-    });
+    let mut session = current
+        .as_ref()
+        .map(|active| active.session.clone())
+        .unwrap_or(Session {
+            client_id: request.client_id,
+            devices: Vec::new(),
+        });
     session.devices.extend(additions);
     session.devices.sort();
     session.devices.dedup();
-    *current = Some(session.clone());
+    *current = Some(ActiveSession {
+        session: session.clone(),
+        last_heartbeat: Instant::now(),
+    });
     (StatusCode::CREATED, Json(session)).into_response()
 }
 
@@ -322,11 +388,12 @@ async fn release(
 ) -> impl IntoResponse {
     let mut current = state.session.write().await;
     match current.as_ref() {
-        Some(session) if session.client_id == request.client_id => {
+        Some(active) if active.session.client_id == request.client_id => {
             let targets = if request.devices.is_empty() {
-                session.devices.clone()
+                active.session.devices.clone()
             } else {
-                let owned: BTreeSet<&str> = session.devices.iter().map(String::as_str).collect();
+                let owned: BTreeSet<&str> =
+                    active.session.devices.iter().map(String::as_str).collect();
                 if request
                     .devices
                     .iter()
@@ -346,11 +413,14 @@ async fn release(
                 return (StatusCode::BAD_GATEWAY, Json(ErrorResponse { error })).into_response();
             }
             let released: BTreeSet<&str> = targets.iter().map(String::as_str).collect();
-            let mut remaining = session.clone();
+            let mut remaining = active.session.clone();
             remaining
                 .devices
                 .retain(|device| !released.contains(device.as_str()));
-            *current = (!remaining.devices.is_empty()).then_some(remaining);
+            *current = (!remaining.devices.is_empty()).then(|| ActiveSession {
+                session: remaining,
+                last_heartbeat: Instant::now(),
+            });
             StatusCode::NO_CONTENT.into_response()
         }
         Some(_) => (
@@ -362,6 +432,38 @@ async fn release(
             .into_response(),
         None => StatusCode::NO_CONTENT.into_response(),
     }
+}
+
+async fn expire_sessions(state: AppState) {
+    let check_interval = state.lease_timeout.min(Duration::from_secs(5));
+    let mut interval = tokio::time::interval(check_interval);
+    interval.tick().await;
+    loop {
+        interval.tick().await;
+        if let Err(error) = expire_session(&state).await {
+            warn!(%error, "failed to release expired USB session");
+        }
+    }
+}
+
+async fn expire_session(state: &AppState) -> Result<bool, String> {
+    let mut current = state.session.write().await;
+    let Some(active) = current.as_ref() else {
+        return Ok(false);
+    };
+    if active.last_heartbeat.elapsed() < state.lease_timeout {
+        return Ok(false);
+    }
+
+    let expired = active.session.clone();
+    control_devices(state, HostControlAction::Unbind, &expired.devices).await?;
+    *current = None;
+    info!(
+        client_id = %expired.client_id,
+        devices = ?expired.devices,
+        "expired USB session released"
+    );
+    Ok(true)
 }
 
 async fn control_devices(
@@ -652,7 +754,31 @@ async fn shutdown_signal() {
 
 #[cfg(test)]
 mod tests {
-    use super::classify_device;
+    use super::*;
+
+    fn test_state(session: Option<ActiveSession>, lease_timeout: Duration) -> AppState {
+        AppState {
+            backend: "mock".into(),
+            sysfs_root: PathBuf::new(),
+            selection_file: PathBuf::new(),
+            control_backend: "mock".into(),
+            #[cfg(unix)]
+            host_agent_socket: PathBuf::new(),
+            selected: Arc::new(RwLock::new(BTreeSet::new())),
+            session: Arc::new(RwLock::new(session)),
+            lease_timeout,
+        }
+    }
+
+    fn active_session(last_heartbeat: Instant) -> ActiveSession {
+        ActiveSession {
+            session: Session {
+                client_id: "client-a".into(),
+                devices: vec!["1-2".into()],
+            },
+            last_heartbeat,
+        }
+    }
 
     #[test]
     fn prohibits_storage_audio_and_video_classes() {
@@ -669,5 +795,46 @@ mod tests {
         assert!(result.0);
         assert_eq!(result.1, "caution");
         assert!(result.2.unwrap().contains("FTDI"));
+    }
+
+    #[tokio::test]
+    async fn expired_session_is_released() {
+        let state = test_state(
+            Some(active_session(Instant::now() - Duration::from_secs(2))),
+            Duration::from_secs(1),
+        );
+
+        assert!(expire_session(&state).await.unwrap());
+        assert!(state.session.read().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn live_session_is_not_released() {
+        let state = test_state(
+            Some(active_session(Instant::now())),
+            Duration::from_secs(30),
+        );
+
+        assert!(!expire_session(&state).await.unwrap());
+        assert!(state.session.read().await.is_some());
+    }
+
+    #[tokio::test]
+    async fn owner_heartbeat_renews_session() {
+        let old_heartbeat = Instant::now() - Duration::from_secs(20);
+        let state = test_state(Some(active_session(old_heartbeat)), Duration::from_secs(45));
+
+        let response = heartbeat(
+            State(state.clone()),
+            Json(HeartbeatRequest {
+                client_id: "client-a".into(),
+            }),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        let renewed = state.session.read().await;
+        assert!(renewed.as_ref().unwrap().last_heartbeat > old_heartbeat);
     }
 }

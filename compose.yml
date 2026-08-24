@@ -13,6 +13,7 @@ services:
       USB_SYSFS_ROOT: /host/sys/bus/usb/devices
       HOST_AGENT_SOCKET: /run/lan-usb-bridge/host-agent.sock
       SELECTION_FILE: /data/selection.json
+      SESSION_LEASE_SECONDS: ${SESSION_LEASE_SECONDS:-45}
     user: "${USB_BRIDGE_UID:-1000}:${USB_BRIDGE_GID:-1000}"
     volumes:
       # USBデバイスのエントリは/sys/devicesへのsymlinkなので/sys全体が必要です。

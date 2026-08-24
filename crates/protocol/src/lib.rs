@@ -45,6 +45,11 @@ pub struct ReleaseRequest {
     pub devices: Vec<String>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct HeartbeatRequest {
+    pub client_id: String,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct SelectionRequest {
     #[serde(default)]

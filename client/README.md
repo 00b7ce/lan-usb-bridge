@@ -49,6 +49,7 @@ The GUI provides:
 - Individual attach and detach controls for every USB device
 - Checkbox-based batch attach and detach
 - Automatic detach and server-session release on normal GUI exit
+- A 10-second heartbeat that keeps the server lease active while the GUI owns a session
 - USB topology grouping for display only; devices under a hub remain individually controlled
 - Statuses for available, attached, warning, blocked, owned by another PC, and errors
 - Background workers for HTTP, `usbip.exe`, wait operations, settings, and log writes
@@ -160,7 +161,7 @@ Read-only API commands do not normally require elevation.
 - The server API has no authentication or access token.
 - A normal GUI exit detaches devices and releases the server session. Forced
   termination, a Windows crash, or power loss can still leave the session active
-  because there is no server-side lease or heartbeat yet.
+  until the server-side lease expires (45 seconds by default).
 - Hot-unplug and reconnect recovery is not complete.
 - usbip-win2 persistent-device stash management is not implemented.
 - Device compatibility depends on both usbip-win2 and the device driver stack.
