@@ -30,6 +30,7 @@ Implemented features include:
 - Individual and checkbox-based batch attach/detach in the Windows GUI
 - Automatic detach and session release on normal GUI exit
 - Heartbeat-based session leases with automatic server-side expiry and unbind
+- Hidden `usbip.exe` child processes and disabled GUI controls during USB transitions
 - USB topology grouping for display without product-specific bundle rules
 - Rollback after multi-device attach failure
 - Automatic restoration of remaining Windows attachments when usbip-win2 drops more

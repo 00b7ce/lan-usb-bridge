@@ -50,6 +50,7 @@ The GUI provides:
 - Checkbox-based batch attach and detach
 - Automatic detach and server-session release on normal GUI exit
 - A 10-second heartbeat that keeps the server lease active while the GUI owns a session
+- Console-free `usbip.exe` child processes and a disabled UI during attach/detach transitions
 - USB topology grouping for display only; devices under a hub remain individually controlled
 - Statuses for available, attached, warning, blocked, owned by another PC, and errors
 - Background workers for HTTP, `usbip.exe`, wait operations, settings, and log writes

@@ -94,6 +94,7 @@ impl BridgeApp {
             return;
         };
         self.state.busy = true;
+        self.state.usb_transition_in_progress = true;
         self.state.last_error = None;
         let sender = self.sender.clone();
         let shutdown = self.shutdown.clone();
@@ -124,6 +125,7 @@ impl BridgeApp {
             return;
         };
         self.state.busy = true;
+        self.state.usb_transition_in_progress = true;
         self.state.last_error = None;
         let sender = self.sender.clone();
         let target_count = devices.len();
@@ -200,6 +202,7 @@ impl BridgeApp {
                 WorkerMessage::OperationFinished(result) => {
                     self.join_operation_thread();
                     self.state.busy = false;
+                    self.state.usb_transition_in_progress = false;
                     match result {
                         Ok(message) => {
                             self.state.progress = message.clone();
@@ -326,6 +329,7 @@ impl eframe::App for BridgeApp {
                 ui.ctx(),
                 &mut self.state.show_settings,
                 &mut self.state.settings,
+                !self.state.usb_transition_in_progress,
             ) {
                 SettingsAction::None => {}
                 SettingsAction::Cancel => self.state.show_settings = false,

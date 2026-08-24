@@ -61,6 +61,9 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) -> ViewAction {
         .unwrap_or_default();
 
     egui::Frame::central_panel(ui.style()).show(ui, |ui| {
+        if state.usb_transition_in_progress {
+            ui.disable();
+        }
         ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
         ui.horizontal(|ui| {
             ui.heading(RichText::new("LAN USB Bridge").size(21.0));

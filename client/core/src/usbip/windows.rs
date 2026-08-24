@@ -1,3 +1,5 @@
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use std::{ffi::OsString, path::PathBuf, process::Command};
 
 use crate::{
@@ -38,16 +40,17 @@ impl WindowsUsbip {
                 code: Some(0),
             });
         }
-        let output = Command::new(&self.executable)
-            .args(&args)
-            .output()
-            .map_err(|error| {
-                if error.kind() == std::io::ErrorKind::NotFound {
-                    ClientError::UsbipNotFound
-                } else {
-                    ClientError::UsbipIo(error)
-                }
-            })?;
+        let mut command = Command::new(&self.executable);
+        command.args(&args);
+        #[cfg(target_os = "windows")]
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        let output = command.output().map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                ClientError::UsbipNotFound
+            } else {
+                ClientError::UsbipIo(error)
+            }
+        })?;
         let result = CommandOutput {
             stdout: String::from_utf8_lossy(&output.stdout).trim().to_owned(),
             stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),

@@ -11,7 +11,12 @@ pub enum SettingsAction {
     Cancel,
 }
 
-pub fn show(ctx: &egui::Context, open: &mut bool, draft: &mut SettingsDraft) -> SettingsAction {
+pub fn show(
+    ctx: &egui::Context,
+    open: &mut bool,
+    draft: &mut SettingsDraft,
+    enabled: bool,
+) -> SettingsAction {
     let mut action = SettingsAction::None;
     let mut window_open = *open;
     egui::Window::new("設定")
@@ -19,6 +24,9 @@ pub fn show(ctx: &egui::Context, open: &mut bool, draft: &mut SettingsDraft) -> 
         .collapsible(false)
         .resizable(false)
         .show(ctx, |ui| {
+            if !enabled {
+                ui.disable();
+            }
             ui.label("サーバーURL");
             ui.text_edit_singleline(&mut draft.server_url);
             ui.label("client_id");
