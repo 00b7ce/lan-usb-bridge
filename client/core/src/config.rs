@@ -43,8 +43,9 @@ pub fn local_data_dir() -> Result<PathBuf> {
 }
 
 fn project_dirs() -> Result<ProjectDirs> {
-    ProjectDirs::from("net", "lan-usb-bridge", "LAN USB Bridge")
-        .ok_or_else(|| ClientError::Config("ユーザー設定ディレクトリを特定できません".into()))
+    ProjectDirs::from("net", "lan-usb-bridge", "LAN USB Bridge").ok_or_else(|| {
+        ClientError::Config("could not locate the user configuration directory".into())
+    })
 }
 
 pub fn load(overrides: Overrides) -> Result<Config> {
@@ -62,7 +63,7 @@ pub fn save(config: &Config) -> Result<()> {
 
 pub fn from_values(server_url: &str, client_id: &str, usbip_path: PathBuf) -> Result<Config> {
     if client_id.trim().is_empty() {
-        return Err(ClientError::Config("client_idは空にできません".into()));
+        return Err(ClientError::Config("client_id must not be empty".into()));
     }
     Ok(Config {
         server_url: validate_server_url(server_url)?,
@@ -82,7 +83,7 @@ where
             source,
         })?;
         serde_json::from_slice(&bytes).map_err(|error| {
-            ClientError::Config(format!("{} のJSONが不正です: {error}", path.display()))
+            ClientError::Config(format!("{} contains invalid JSON: {error}", path.display()))
         })?
     } else {
         StoredConfig::default()
@@ -104,7 +105,7 @@ where
         .or_else(|| env_get("USB_BRIDGE_CLIENT_ID"))
         .or(stored.client_id)
         .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| ClientError::Config("client_idは空にできません".into()))?;
+        .ok_or_else(|| ClientError::Config("client_id must not be empty".into()))?;
     let usbip_path = overrides
         .usbip_path
         .or_else(|| env_get("USB_BRIDGE_USBIP_PATH").map(PathBuf::from))
@@ -135,15 +136,15 @@ fn persist(path: &Path, stored: &StoredConfig) -> Result<()> {
 
 fn validate_server_url(value: &str) -> Result<Url> {
     let mut url = Url::parse(value)
-        .map_err(|error| ClientError::Config(format!("サーバーURLが不正です: {error}")))?;
+        .map_err(|error| ClientError::Config(format!("invalid server URL: {error}")))?;
     if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
         return Err(ClientError::Config(
-            "サーバーURLにはhttpまたはhttpsの絶対URLを指定してください".into(),
+            "the server URL must be an absolute http or https URL".into(),
         ));
     }
     if url.query().is_some() || url.fragment().is_some() || !matches!(url.path(), "" | "/") {
         return Err(ClientError::Config(
-            "サーバーURLにはscheme・host・portだけを指定してください".into(),
+            "the server URL may contain only a scheme, host, and port".into(),
         ));
     }
     url.set_path("/");

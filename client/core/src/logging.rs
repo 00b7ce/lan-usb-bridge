@@ -39,7 +39,7 @@ impl FileLogger {
         let _guard = self
             .lock
             .lock()
-            .map_err(|_| ClientError::Config("ログロックが破損しました".into()))?;
+            .map_err(|_| ClientError::Config("the log lock is poisoned".into()))?;
         if self
             .path
             .metadata()

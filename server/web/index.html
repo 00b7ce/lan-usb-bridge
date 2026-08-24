@@ -30,14 +30,14 @@
     <header>
       <div>
         <h1>USB Bridge</h1>
-        <p>転送対象にするUSBデバイスを選択します。USBハブはグループとしてのみ表示されます。</p>
+        <p>Select the USB devices that may be transferred. USB hubs are shown only as groups.</p>
       </div>
-      <button id="reload" type="button">再検出</button>
+      <button id="reload" type="button">Refresh</button>
     </header>
     <div id="message" role="status"></div>
-    <main id="devices">読み込み中...</main>
+    <main id="devices">Loading...</main>
     <div class="actions">
-      <button id="save" type="button">選択を保存</button>
+      <button id="save" type="button">Save selection</button>
       <span id="count"></span>
     </div>
 
@@ -53,7 +53,7 @@
 
       function updateCount() {
         const selected = document.querySelectorAll('input.device-select:checked').length;
-        count.textContent = `${selected}個選択中`;
+        count.textContent = `${selected} selected`;
       }
 
       function render() {
@@ -76,7 +76,7 @@
               .forEach(input => { input.checked = groupToggle.checked; });
             updateCount();
           });
-          legend.append(groupToggle, ` USB接続グループ ${parent}`);
+          legend.append(groupToggle, ` USB connection group ${parent}`);
           fieldset.append(legend);
 
           for (const device of children) {
@@ -97,7 +97,7 @@
             name.textContent = displayName(device);
             const meta = document.createElement('div');
             meta.className = 'meta';
-            meta.textContent = `${device.vendor_id}:${device.product_id} · ${device.bus_id} · ${device.drivers.join(', ') || 'driverなし'}`;
+            meta.textContent = `${device.vendor_id}:${device.product_id} | ${device.bus_id} | ${device.drivers.join(', ') || 'no driver'}`;
             details.append(name, meta);
             if (device.warning) {
               const warning = document.createElement('div');
@@ -107,27 +107,27 @@
             }
             const badge = document.createElement('span');
             badge.className = `badge ${device.risk}`;
-            badge.textContent = device.risk === 'normal' ? '通常' : '注意';
+            badge.textContent = device.risk === 'normal' ? 'Normal' : 'Caution';
             row.append(checkbox, details, badge);
             fieldset.append(row);
           }
           container.append(fieldset);
         }
-        if (!devices.length) container.textContent = 'USBハブ以外のデバイスが見つかりませんでした。';
+        if (!devices.length) container.textContent = 'No non-hub USB devices were found.';
         updateCount();
       }
 
       async function loadDevices() {
-        message.textContent = 'USBデバイスを検出しています...';
+        message.textContent = 'Discovering USB devices...';
         message.className = '';
         try {
           const response = await fetch('/api/devices');
           if (!response.ok) throw new Error((await response.json()).error || response.statusText);
           devices = await response.json();
           render();
-          message.textContent = `${devices.length}個のUSBデバイスを検出しました。`;
+          message.textContent = `Found ${devices.length} USB device(s).`;
         } catch (error) {
-          message.textContent = `検出に失敗しました: ${error.message}`;
+          message.textContent = `Discovery failed: ${error.message}`;
           message.className = 'error';
         }
       }
@@ -135,7 +135,7 @@
       async function saveSelection() {
         const selected = [...document.querySelectorAll('input.device-select:checked')]
           .map(input => input.value);
-        message.textContent = '保存しています...';
+        message.textContent = 'Saving...';
         message.className = '';
         try {
           const response = await fetch('/api/selection', {
@@ -145,9 +145,9 @@
           });
           if (!response.ok) throw new Error((await response.json()).error || response.statusText);
           devices.forEach(device => { device.selected = selected.includes(device.bus_id); });
-          message.textContent = '選択を保存しました。USBの接続状態は変更していません。';
+          message.textContent = 'Selection saved. USB attachment state was not changed.';
         } catch (error) {
-          message.textContent = `保存に失敗しました: ${error.message}`;
+          message.textContent = `Save failed: ${error.message}`;
           message.className = 'error';
         }
       }

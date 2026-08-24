@@ -618,28 +618,30 @@ fn classify_device(
         return (
             false,
             "prohibited",
-            Some("禁止: ストレージクラスは切断時にデータを破損する危険があるため転送できません"),
+            Some(
+                "Blocked: storage devices are excluded because forced detachment can corrupt data",
+            ),
         );
     }
     if interface_classes.iter().any(|class| class == "01") {
         return (
             false,
             "prohibited",
-            Some("禁止: オーディオクラスは現在の安全な対応範囲外です"),
+            Some("Blocked: audio devices are outside the currently supported safety scope"),
         );
     }
     if interface_classes.iter().any(|class| class == "0e") {
         return (
             false,
             "prohibited",
-            Some("禁止: ビデオクラスは現在の安全な対応範囲外です"),
+            Some("Blocked: video devices are outside the currently supported safety scope"),
         );
     }
     if vendor_id.eq_ignore_ascii_case("0403") {
         return (
             true,
             "caution",
-            Some("WARNING: FTDI系デバイスはusbip-win2で互換性問題が報告されています"),
+            Some("WARNING: FTDI devices have reported usbip-win2 compatibility issues"),
         );
     }
     if !drivers.iter().any(|driver| driver == "cdc_acm")
@@ -650,7 +652,7 @@ fn classify_device(
         return (
             true,
             "caution",
-            Some("ネットワーク機器の場合、Piとの接続を失う可能性があります"),
+            Some("A network adapter may interrupt connectivity to the Raspberry Pi"),
         );
     }
     (true, "normal", None)

@@ -46,7 +46,7 @@ impl Default for AppState {
             snapshot: None,
             busy: true,
             usb_transition_in_progress: false,
-            progress: "設定を読み込んでいます".into(),
+            progress: "Loading settings".into(),
             last_error: None,
             logs: VecDeque::new(),
             selected_devices: BTreeSet::new(),

@@ -8,7 +8,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use eframe::egui::{self, FontData, FontDefinitions, FontFamily};
+use eframe::egui;
 use usb_bridge_client_core::{
     config::{self, Config, Overrides},
     connection,
@@ -40,15 +40,8 @@ pub struct BridgeApp {
 }
 
 impl BridgeApp {
-    pub fn new(
-        creation: &eframe::CreationContext<'_>,
-        japanese_font: Option<Vec<u8>>,
-        logger: Option<Arc<FileLogger>>,
-    ) -> Self {
+    pub fn new(creation: &eframe::CreationContext<'_>, logger: Option<Arc<FileLogger>>) -> Self {
         theme::apply(&creation.egui_ctx);
-        if let Some(font) = japanese_font {
-            install_japanese_font(&creation.egui_ctx, font);
-        }
         let (sender, receiver) = mpsc::channel();
         let (log_sender, log_thread, log_path) = start_logger(logger);
         let mut app = Self {
@@ -79,7 +72,7 @@ impl BridgeApp {
             return;
         };
         self.state.busy = true;
-        self.state.progress = "サーバーを再読込しています".into();
+        self.state.progress = "Refreshing server state".into();
         self.state.last_poll = Instant::now();
         let sender = self.sender.clone();
         thread::spawn(move || {
@@ -109,9 +102,9 @@ impl BridgeApp {
                 })
                 .map(|_| {
                     if target_count == 1 {
-                        "デバイスを接続しました".to_owned()
+                        "Device attached".to_owned()
                     } else {
-                        "グループを接続しました".to_owned()
+                        "Devices attached".to_owned()
                     }
                 })
                 .map_err(|error| error.to_string());
@@ -138,9 +131,9 @@ impl BridgeApp {
             })
             .map(|()| {
                 if target_count == 1 {
-                    "デバイスを切断しました".to_owned()
+                    "Device detached".to_owned()
                 } else {
-                    "グループを切断しました".to_owned()
+                    "Devices detached".to_owned()
                 }
             })
             .map_err(|error| error.to_string());
@@ -151,7 +144,7 @@ impl BridgeApp {
 
     fn spawn_save(&mut self, ctx: egui::Context, new_config: Config) {
         self.state.busy = true;
-        self.state.progress = "設定を保存しています".into();
+        self.state.progress = "Saving settings".into();
         let sender = self.sender.clone();
         thread::spawn(move || {
             let result = config::save(&new_config)
@@ -171,7 +164,7 @@ impl BridgeApp {
                         self.state.settings = SettingsDraft::from(&config);
                         self.state.config = Some(config);
                         self.state.busy = false;
-                        self.log("設定を読み込みました".into());
+                        self.log("Settings loaded".into());
                         refresh_after = true;
                     }
                     Err(error) => self.fail(error),
@@ -186,9 +179,9 @@ impl BridgeApp {
                         });
                         self.state.snapshot = Some(snapshot);
                         self.state.busy = false;
-                        self.state.progress = "最新の状態です".into();
+                        self.state.progress = "Up to date".into();
                         self.state.last_error = None;
-                        self.log("サーバー状態を更新しました".into());
+                        self.log("Server state refreshed".into());
                     }
                     Err(error) => {
                         self.state.snapshot = None;
@@ -218,7 +211,7 @@ impl BridgeApp {
                         self.state.config = Some(config);
                         self.state.show_settings = false;
                         self.state.busy = false;
-                        self.log("設定を保存しました".into());
+                        self.log("Settings saved".into());
                         refresh_after = true;
                     }
                     Err(error) => self.fail(error),
@@ -238,7 +231,7 @@ impl BridgeApp {
 
     fn fail(&mut self, error: String) {
         self.state.busy = false;
-        self.state.progress = "処理に失敗しました".into();
+        self.state.progress = "Operation failed".into();
         self.state.last_error = Some(error.clone());
         self.log(format!("ERROR: {error}"));
     }
@@ -360,9 +353,9 @@ impl eframe::App for BridgeApp {
                 self.log(message);
             }
             match result {
-                Ok(()) => self.log("終了時にUSBデバイスを切断しました".into()),
+                Ok(()) => self.log("USB devices detached during shutdown".into()),
                 Err(error) => self.log(format!(
-                    "ERROR: 終了時のUSBデバイス切断に失敗しました: {error}"
+                    "ERROR: failed to detach USB devices during shutdown: {error}"
                 )),
             }
         }
@@ -372,25 +365,6 @@ impl eframe::App for BridgeApp {
             let _ = thread.join();
         }
     }
-}
-
-fn install_japanese_font(ctx: &egui::Context, bytes: Vec<u8>) {
-    let mut fonts = FontDefinitions::default();
-    fonts.font_data.insert(
-        "windows-japanese".into(),
-        Arc::new(FontData::from_owned(bytes)),
-    );
-    fonts
-        .families
-        .entry(FontFamily::Proportional)
-        .or_default()
-        .insert(0, "windows-japanese".into());
-    fonts
-        .families
-        .entry(FontFamily::Monospace)
-        .or_default()
-        .push("windows-japanese".into());
-    ctx.set_fonts(fonts);
 }
 
 fn start_logger(

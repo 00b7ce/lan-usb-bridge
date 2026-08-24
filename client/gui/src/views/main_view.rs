@@ -72,17 +72,17 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) -> ViewAction {
             ui.colored_label(
                 if connected { theme::GREEN } else { theme::RED },
                 if connected {
-                    "● サーバー接続済み"
+                    "Server connected"
                 } else {
-                    "● 未接続"
+                    "Disconnected"
                 },
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("⚙ 設定").clicked() {
+                if ui.button("Settings").clicked() {
                     action = ViewAction::OpenSettings;
                 }
                 if ui
-                    .add_enabled(!state.busy, egui::Button::new("↻ 再読込"))
+                    .add_enabled(!state.busy, egui::Button::new("Refresh"))
                     .clicked()
                 {
                     action = ViewAction::Refresh;
@@ -93,11 +93,11 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) -> ViewAction {
         ui.separator();
 
         ui.horizontal(|ui| {
-            ui.label(format!("選択: {}台", state.selected_devices.len()));
+            ui.label(format!("Selected: {}", state.selected_devices.len()));
             if ui
                 .add_enabled(
                     !state.busy && !other_owner && !attach_targets.is_empty(),
-                    egui::Button::new(format!("選択を接続 ({})", attach_targets.len())),
+                    egui::Button::new(format!("Attach selected ({})", attach_targets.len())),
                 )
                 .clicked()
             {
@@ -107,7 +107,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) -> ViewAction {
             if ui
                 .add_enabled(
                     !state.busy && !other_owner && !detach_targets.is_empty(),
-                    egui::Button::new(format!("選択を切断 ({})", detach_targets.len())),
+                    egui::Button::new(format!("Detach selected ({})", detach_targets.len())),
                 )
                 .clicked()
             {
@@ -117,14 +117,14 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) -> ViewAction {
             if ui
                 .add_enabled(
                     !state.selected_devices.is_empty(),
-                    egui::Button::new("選択解除"),
+                    egui::Button::new("Clear selection"),
                 )
                 .clicked()
             {
                 state.selected_devices.clear();
             }
             if other_owner {
-                ui.colored_label(theme::GRAY, "他PCのセッション中");
+                ui.colored_label(theme::GRAY, "Owned by another PC");
             }
         });
         ui.separator();
@@ -135,7 +135,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) -> ViewAction {
                 if let Some(snapshot) = &snapshot {
                     let groups = group_devices(&snapshot.devices);
                     if groups.is_empty() {
-                        ui.label("USBデバイスが見つかりません");
+                        ui.label("No USB devices found");
                     }
                     for group in groups {
                         let session = snapshot.session.as_ref();
@@ -149,7 +149,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) -> ViewAction {
                                     ui.with_layout(
                                         egui::Layout::right_to_left(egui::Align::Center),
                                         |ui| {
-                                            ui.small(format!("USBパス: {}", group.id));
+                                            ui.small(format!("USB path: {}", group.id));
                                         },
                                     );
                                 });
@@ -178,7 +178,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) -> ViewAction {
                     }
                 } else {
                     ui.centered_and_justified(|ui| {
-                        ui.label("再読込してサーバーへ接続してください");
+                        ui.label("Refresh to connect to the server");
                     });
                 }
             });
@@ -188,22 +188,22 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) -> ViewAction {
             .as_ref()
             .and_then(|snapshot| snapshot.session.as_ref())
             .map(|session| session.client_id.as_str())
-            .unwrap_or("なし");
+            .unwrap_or("None");
         ui.horizontal(|ui| {
-            ui.label(format!("セッション所有者: {owner}"));
+            ui.label(format!("Session owner: {owner}"));
             ui.separator();
             if state.busy {
                 ui.spinner();
             }
             ui.label(&state.progress);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("詳細ログ").clicked() {
+                if ui.button("Detailed logs").clicked() {
                     action = ViewAction::OpenLogs;
                 }
             });
         });
         if let Some(error) = &state.last_error {
-            ui.colored_label(theme::RED, format!("✕ 最後のエラー: {error}"));
+            ui.colored_label(theme::RED, format!("Last error: {error}"));
         }
     });
     action
@@ -220,9 +220,9 @@ fn device_row(
     let mut action = ViewAction::None;
     let policy = evaluate(device);
     let (color, icon) = match policy.level {
-        PolicyLevel::Allowed => (theme::GREEN, "✓"),
-        PolicyLevel::Warning => (theme::YELLOW, "⚠"),
-        PolicyLevel::Prohibited => (theme::RED, "⊘"),
+        PolicyLevel::Allowed => (theme::GREEN, "OK"),
+        PolicyLevel::Warning => (theme::YELLOW, "!"),
+        PolicyLevel::Prohibited => (theme::RED, "X"),
     };
     ui.horizontal(|ui| {
         let mut selected = selected_devices.contains(&device.bus_id);
@@ -243,7 +243,9 @@ fn device_row(
         ui.colored_label(color, icon);
         ui.vertical(|ui| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new(device.product.as_deref().unwrap_or("製品名不明")).strong());
+                ui.label(
+                    RichText::new(device.product.as_deref().unwrap_or("Unknown product")).strong(),
+                );
                 ui.small(format!(
                     "{}  {}:{}",
                     device.bus_id, device.vendor_id, device.product_id
@@ -253,13 +255,17 @@ fn device_row(
                 ui.small(RichText::new(policy.detail).color(color));
             }
             if let Some(warning) = &device.warning {
-                ui.small(warning);
+                ui.small(if warning.is_ascii() {
+                    warning.as_str()
+                } else {
+                    "The server reported a device warning; update the server for details."
+                });
             }
         });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if connected {
                 if ui
-                    .add_enabled(!busy && !other_owner, egui::Button::new("切断"))
+                    .add_enabled(!busy && !other_owner, egui::Button::new("Detach"))
                     .clicked()
                 {
                     action = ViewAction::Disconnect(vec![device.bus_id.clone()]);
@@ -268,9 +274,9 @@ fn device_row(
                 .add_enabled(
                     !busy && !other_owner && policy.level != PolicyLevel::Prohibited,
                     egui::Button::new(if policy.level == PolicyLevel::Prohibited {
-                        "接続禁止"
+                        "Blocked"
                     } else {
-                        "接続"
+                        "Attach"
                     }),
                 )
                 .clicked()
@@ -279,15 +285,15 @@ fn device_row(
             }
             ui.add_space(4.0);
             let (status_color, status) = if other_owner {
-                (theme::GRAY, "他PCが使用中")
+                (theme::GRAY, "In use by another PC")
             } else if policy.level == PolicyLevel::Prohibited {
-                (theme::RED, "接続禁止")
+                (theme::RED, "Blocked")
             } else if connected {
-                (theme::BLUE, "接続中")
+                (theme::BLUE, "Attached")
             } else if policy.level == PolicyLevel::Warning {
-                (theme::YELLOW, "要注意")
+                (theme::YELLOW, "Caution")
             } else {
-                (Color32::LIGHT_GREEN, "利用可能")
+                (Color32::LIGHT_GREEN, "Available")
             };
             ui.colored_label(status_color, status);
         });

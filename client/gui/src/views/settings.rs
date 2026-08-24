@@ -19,7 +19,7 @@ pub fn show(
 ) -> SettingsAction {
     let mut action = SettingsAction::None;
     let mut window_open = *open;
-    egui::Window::new("設定")
+    egui::Window::new("Settings")
         .open(&mut window_open)
         .collapsible(false)
         .resizable(false)
@@ -27,15 +27,15 @@ pub fn show(
             if !enabled {
                 ui.disable();
             }
-            ui.label("サーバーURL");
+            ui.label("Server URL");
             ui.text_edit_singleline(&mut draft.server_url);
             ui.label("client_id");
             ui.text_edit_singleline(&mut draft.client_id);
-            ui.label("usbip.exeのパス");
+            ui.label("Path to usbip.exe");
             ui.text_edit_singleline(&mut draft.usbip_path);
             ui.add_space(10.0);
             ui.horizontal(|ui| {
-                if ui.button("保存").clicked() {
+                if ui.button("Save").clicked() {
                     match config::from_values(
                         &draft.server_url,
                         &draft.client_id,
@@ -47,7 +47,7 @@ pub fn show(
                         }
                     }
                 }
-                if ui.button("キャンセル").clicked() {
+                if ui.button("Cancel").clicked() {
                     action = SettingsAction::Cancel;
                 }
             });

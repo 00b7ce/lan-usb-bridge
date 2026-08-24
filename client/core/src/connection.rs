@@ -41,7 +41,9 @@ where
     F: FnMut(String),
 {
     if devices.is_empty() {
-        return Err(ClientError::Config("接続対象デバイスがありません".into()));
+        return Err(ClientError::Config(
+            "no devices were selected for attachment".into(),
+        ));
     }
     for device in devices {
         ensure_allowed(device)?;
@@ -65,12 +67,12 @@ where
         return existing.ok_or(ClientError::SessionAlreadyExists);
     }
     let bus_ids: Vec<String> = devices.iter().map(|device| device.bus_id.clone()).collect();
-    progress("サーバーから利用権を取得しています".into());
+    progress("Acquiring devices from the server".into());
     let session = api.acquire(&config.client_id, bus_ids.clone())?;
     let host = config
         .server_url
         .host_str()
-        .ok_or_else(|| ClientError::Config("サーバーURLにホストがありません".into()))?;
+        .ok_or_else(|| ClientError::Config("the server URL has no host".into()))?;
     let mut attached = Vec::new();
     for device in devices {
         if cancelled.load(Ordering::Acquire) {
@@ -85,7 +87,7 @@ where
             );
             return Err(ClientError::Cancelled);
         }
-        progress(format!("{} をUSB/IP接続しています", device.bus_id));
+        progress(format!("Attaching {} over USB/IP", device.bus_id));
         if let Err(error) = usbip.attach(host, &device.bus_id) {
             rollback(
                 &api,
@@ -145,7 +147,7 @@ where
             return Err(error);
         }
     }
-    progress("接続しました".into());
+    progress("Attached".into());
     Ok(session)
 }
 
@@ -180,7 +182,7 @@ where
     let host = config
         .server_url
         .host_str()
-        .ok_or_else(|| ClientError::Config("サーバーURLにホストがありません".into()))?;
+        .ok_or_else(|| ClientError::Config("the server URL has no host".into()))?;
     let mut stop_all_needed = false;
     for bus_id in devices {
         if usbip.stop_attach(host, bus_id).is_err() {
@@ -191,28 +193,29 @@ where
         let _ = usbip.stop_all();
     }
     for bus_id in devices {
-        progress(format!("{bus_id} を切断しています"));
+        progress(format!("Detaching {bus_id}"));
         match usbip.detach_bus_id(bus_id) {
             Ok(_) | Err(ClientError::UsbipPortNotFound(_)) => {}
             Err(error) => detach_errors.push(error.to_string()),
         }
     }
-    progress("サーバーの利用権を解放しています".into());
+    progress("Releasing devices on the server".into());
     api.release_devices(&config.client_id, devices.to_vec())?;
     for bus_id in remaining {
         match usbip.attached_port(&bus_id) {
             Ok(Some(_)) => {}
             Ok(None) => {
-                progress(format!("{bus_id} のUSB/IP接続が失われたため復元しています"));
+                progress(format!("Restoring the lost USB/IP attachment for {bus_id}"));
                 if let Err(error) = usbip.attach(host, &bus_id) {
-                    detach_errors.push(format!("{bus_id} の再接続に失敗: {error}"));
+                    detach_errors.push(format!("failed to reattach {bus_id}: {error}"));
                     continue;
                 }
                 if !usbip.is_dry_run() && !wait_for_port(usbip, &bus_id, &AtomicBool::new(false))? {
-                    detach_errors.push(format!("{bus_id} の再接続ポートを確認できません"));
+                    detach_errors
+                        .push(format!("could not verify the reattached port for {bus_id}"));
                 }
             }
-            Err(error) => detach_errors.push(format!("{bus_id} の接続確認に失敗: {error}")),
+            Err(error) => detach_errors.push(format!("failed to verify {bus_id}: {error}")),
         }
     }
     if detach_errors.is_empty() {

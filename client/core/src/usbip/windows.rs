@@ -71,7 +71,7 @@ impl WindowsUsbip {
                 || lower.contains("administrator")
                 || lower.contains("elevation")
             {
-                "（管理者としてWindows Terminalを起動して再試行してください）"
+                " (restart Windows Terminal as Administrator and try again)"
             } else {
                 ""
             };

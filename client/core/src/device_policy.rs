@@ -20,7 +20,7 @@ pub fn evaluate(device: &UsbDevice) -> DevicePolicy {
     if let Some(class_name) = prohibited_class(device) {
         return DevicePolicy {
             level: PolicyLevel::Prohibited,
-            label: "禁止",
+            label: "Blocked",
             detail: class_name,
         };
     }
@@ -28,7 +28,7 @@ pub fn evaluate(device: &UsbDevice) -> DevicePolicy {
         return DevicePolicy {
             level: PolicyLevel::Warning,
             label: "WARNING",
-            detail: "FTDI: usbip-win2互換性問題の可能性",
+            detail: "FTDI: possible usbip-win2 compatibility issue",
         };
     }
     if !device.selectable || device.risk != "normal" {
@@ -41,15 +41,15 @@ pub fn evaluate(device: &UsbDevice) -> DevicePolicy {
             label: if device.selectable {
                 "WARNING"
             } else {
-                "禁止"
+                "Blocked"
             },
-            detail: "サーバーのデバイスポリシー",
+            detail: "Server device policy",
         };
     }
     DevicePolicy {
         level: PolicyLevel::Allowed,
-        label: "利用可能",
-        detail: "転送許可",
+        label: "Available",
+        detail: "Transfer allowed",
     }
 }
 
@@ -67,8 +67,7 @@ pub fn ensure_allowed(device: &UsbDevice) -> Result<()> {
 }
 
 pub fn prohibited_class(device: &UsbDevice) -> Option<&'static str> {
-    for (code, name) in [("08", "ストレージ"), ("01", "オーディオ"), ("0e", "ビデオ")]
-    {
+    for (code, name) in [("08", "storage"), ("01", "audio"), ("0e", "video")] {
         if device
             .interface_classes
             .iter()

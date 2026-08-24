@@ -21,7 +21,7 @@ impl ApiClient {
             .timeout(Duration::from_secs(10))
             .build()
             .map_err(|error| {
-                ClientError::Config(format!("HTTPクライアントを初期化できません: {error}"))
+                ClientError::Config(format!("failed to initialize the HTTP client: {error}"))
             })?;
         Ok(Self { base_url, http })
     }
@@ -84,7 +84,7 @@ impl ApiClient {
     fn endpoint(&self, path: &str) -> Result<Url> {
         self.base_url
             .join(path)
-            .map_err(|error| ClientError::Config(format!("API URLを構築できません: {error}")))
+            .map_err(|error| ClientError::Config(format!("failed to construct API URL: {error}")))
     }
 
     fn send(&self, request: RequestBuilder) -> Result<Response> {
@@ -110,7 +110,7 @@ impl ApiClient {
                 if text.trim().is_empty() {
                     status
                         .canonical_reason()
-                        .unwrap_or("不明なHTTPエラー")
+                        .unwrap_or("unknown HTTP error")
                         .into()
                 } else {
                     text
@@ -169,7 +169,7 @@ mod tests {
             api.health()
                 .unwrap_err()
                 .to_string()
-                .contains("JSONとして解析")
+                .contains("parse server response as JSON")
         );
     }
 }

@@ -28,7 +28,7 @@ struct Cli {
     #[arg(
         long,
         global = true,
-        help = "usbip.exeを実行せず、予定コマンドを表示する"
+        help = "Print the planned commands without running usbip.exe"
     )]
     dry_run: bool,
     #[command(subcommand)]
@@ -81,7 +81,7 @@ pub fn run() -> Result<()> {
     let host = cfg
         .server_url
         .host_str()
-        .ok_or_else(|| ClientError::Config("サーバーURLにホストがありません".into()))?;
+        .ok_or_else(|| ClientError::Config("the server URL has no host".into()))?;
 
     match cli.command {
         Command::Health => {
@@ -96,7 +96,7 @@ pub fn run() -> Result<()> {
             let session = api.acquire(&cfg.client_id, ids.devices)?;
             print_session(Some(&session));
             println!(
-                "サーバーがhost-agent制御を有効にしている場合、対象デバイスはUSB/IPへexportされています。"
+                "If host-agent control is enabled on the server, the devices are now exported over USB/IP."
             );
         }
         Command::Release => release_owned(&api, &cfg.client_id)?,
@@ -140,13 +140,13 @@ fn attach(
         let host = config
             .server_url
             .host_str()
-            .ok_or_else(|| ClientError::Config("サーバーURLにホストがありません".into()))?;
+            .ok_or_else(|| ClientError::Config("the server URL has no host".into()))?;
         println!(
             "dry-run: acquire client_id={} BUS_ID={bus_id}",
             config.client_id
         );
         print_output(usbip.attach(host, bus_id)?);
-        println!("dry-run: attach失敗時は取得したセッションをrelease");
+        println!("dry-run: release the acquired session if attach fails");
         return Ok(());
     }
     let cancelled = AtomicBool::new(false);
@@ -174,7 +174,7 @@ fn ensure_owned(api: &ApiClient, client_id: &str) -> Result<Session> {
         Some(session) if session.client_id == client_id => Ok(session),
         Some(session) => Err(ClientError::SessionOwnedByOther(session.client_id)),
         None => Err(ClientError::Config(
-            "解放・切断できるセッションがありません".into(),
+            "there is no session to release or detach".into(),
         )),
     }
 }
@@ -182,33 +182,33 @@ fn ensure_owned(api: &ApiClient, client_id: &str) -> Result<Session> {
 fn release_owned(api: &ApiClient, client_id: &str) -> Result<()> {
     ensure_owned(api, client_id)?;
     api.release(client_id)?;
-    println!("セッションを解放しました");
+    println!("Session released");
     Ok(())
 }
 
 fn print_devices(devices: &[UsbDevice]) {
     if devices.is_empty() {
-        println!("USBデバイスはありません");
+        println!("No USB devices found");
         return;
     }
     for d in devices {
-        let name = d.product.as_deref().unwrap_or("(製品名不明)");
+        let name = d.product.as_deref().unwrap_or("(unknown product)");
         let policy = evaluate(d);
         println!(
             "[{}] {}  {}:{}  {}  selectable={} risk={} status={}",
             policy.label, d.bus_id, d.vendor_id, d.product_id, name, d.selectable, d.risk, d.status
         );
         if let Some(class_name) = prohibited_class(d) {
-            println!("  禁止理由: {class_name}クラスは安全上の理由により転送対象外です");
+            println!("  Blocked: the {class_name} class is excluded for safety reasons");
         }
         if is_ftdi(d) {
-            println!("  WARNING: FTDI系デバイスはusbip-win2で互換性問題が報告されています");
+            println!("  WARNING: FTDI devices have reported usbip-win2 compatibility issues");
         }
         if prohibited_class(d).is_none()
             && !is_ftdi(d)
             && let Some(warning) = &d.warning
         {
-            println!("  警告: {warning}");
+            println!("  Warning: {warning}");
         }
     }
 }
@@ -219,12 +219,12 @@ fn print_session(session: Option<&Session>) {
             "client_id: {}\ndevices: {}",
             s.client_id,
             if s.devices.is_empty() {
-                "(なし)".into()
+                "(none)".into()
             } else {
                 s.devices.join(", ")
             }
         ),
-        None => println!("アクティブなセッションはありません"),
+        None => println!("No active session"),
     }
 }
 
@@ -237,7 +237,7 @@ fn warn_for_device(devices: &[UsbDevice], bus_id: &str) {
 fn warn_device(device: &UsbDevice) {
     if is_ftdi(device) {
         eprintln!(
-            "WARNING: {} はFTDI系デバイスです。usbip-win2では列挙失敗やSTATUS_NO_SUCH_DEVICEなどの互換性問題が報告されています。",
+            "WARNING: {} is an FTDI device. usbip-win2 compatibility problems such as enumeration failures and STATUS_NO_SUCH_DEVICE have been reported.",
             device.bus_id
         );
     }
@@ -248,12 +248,12 @@ fn warn_device(device: &UsbDevice) {
             .any(|class| class.eq_ignore_ascii_case("08"))
     {
         eprintln!(
-            "警告: {} は切断時にデータ損失や機能停止の可能性があります。書き込みを停止し、安全に取り外せる状態を確認してください。",
+            "WARNING: detaching {} may cause data loss or interrupt its function. Stop writes and confirm that it is safe to remove.",
             device.bus_id
         );
     }
     if let Some(warning) = &device.warning {
-        eprintln!("警告: {warning}");
+        eprintln!("Warning: {warning}");
     }
 }
 

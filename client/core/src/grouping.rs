@@ -23,9 +23,9 @@ pub fn group_devices(devices: &[UsbDevice]) -> Vec<DeviceGroup> {
         .map(|(id, mut devices)| {
             devices.sort_by(|left, right| left.bus_id.cmp(&right.bus_id));
             let title = if devices.len() > 1 {
-                format!("USBハブ {id} 配下（個別操作）")
+                format!("Devices under USB hub {id} (individual control)")
             } else {
-                "単体デバイス".to_owned()
+                "Standalone devices".to_owned()
             };
             DeviceGroup { id, title, devices }
         })
@@ -81,6 +81,9 @@ mod tests {
 
         let groups = group_devices(&devices);
 
-        assert_eq!(groups[0].title, "USBハブ 1-1.2 配下（個別操作）");
+        assert_eq!(
+            groups[0].title,
+            "Devices under USB hub 1-1.2 (individual control)"
+        );
     }
 }
