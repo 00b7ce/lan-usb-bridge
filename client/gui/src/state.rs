@@ -35,6 +35,7 @@ pub struct AppState {
     pub show_settings: bool,
     pub show_logs: bool,
     pub last_poll: Instant,
+    pub refresh_in_flight: bool,
     pub last_heartbeat: Instant,
     pub heartbeat_in_flight: bool,
 }
@@ -54,6 +55,7 @@ impl Default for AppState {
             show_settings: false,
             show_logs: false,
             last_poll: Instant::now(),
+            refresh_in_flight: false,
             last_heartbeat: Instant::now(),
             heartbeat_in_flight: false,
         }

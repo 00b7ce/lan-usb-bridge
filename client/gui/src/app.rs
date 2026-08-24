@@ -67,17 +67,25 @@ impl BridgeApp {
         });
     }
 
-    fn spawn_refresh(&mut self, ctx: egui::Context) {
+    fn spawn_refresh(&mut self, ctx: egui::Context, show_feedback: bool) {
+        if self.state.refresh_in_flight {
+            return;
+        }
         let Some(config) = self.state.config.clone() else {
             return;
         };
-        self.state.busy = true;
-        self.state.progress = "Refreshing server state".into();
+        self.state.refresh_in_flight = true;
+        if show_feedback {
+            self.state.progress = "Refreshing server state".into();
+        }
         self.state.last_poll = Instant::now();
         let sender = self.sender.clone();
         thread::spawn(move || {
             let result = connection::refresh(&config).map_err(|error| error.to_string());
-            let _ = sender.send(WorkerMessage::Refreshed(result));
+            let _ = sender.send(WorkerMessage::Refreshed {
+                result,
+                show_feedback,
+            });
             ctx.request_repaint();
         });
     }
@@ -169,7 +177,10 @@ impl BridgeApp {
                     }
                     Err(error) => self.fail(error),
                 },
-                WorkerMessage::Refreshed(result) => match result {
+                WorkerMessage::Refreshed {
+                    result,
+                    show_feedback,
+                } => match result {
                     Ok(snapshot) => {
                         self.state.selected_devices.retain(|bus_id| {
                             snapshot
@@ -178,14 +189,19 @@ impl BridgeApp {
                                 .any(|device| &device.bus_id == bus_id)
                         });
                         self.state.snapshot = Some(snapshot);
-                        self.state.busy = false;
-                        self.state.progress = "Up to date".into();
+                        self.state.refresh_in_flight = false;
                         self.state.last_error = None;
-                        self.log("Server state refreshed".into());
+                        if show_feedback {
+                            self.state.progress = "Up to date".into();
+                            self.log("Server state refreshed".into());
+                        }
                     }
                     Err(error) => {
+                        self.state.refresh_in_flight = false;
                         self.state.snapshot = None;
-                        self.fail(error);
+                        self.state.progress = "Failed to refresh server state".into();
+                        self.state.last_error = Some(error.clone());
+                        self.log(format!("ERROR: {error}"));
                     }
                 },
                 WorkerMessage::Progress(progress) => {
@@ -225,7 +241,7 @@ impl BridgeApp {
             }
         }
         if refresh_after && !self.state.busy {
-            self.spawn_refresh(ctx.clone());
+            self.spawn_refresh(ctx.clone(), true);
         }
     }
 
@@ -244,7 +260,7 @@ impl BridgeApp {
     }
 
     fn maybe_poll(&mut self, ctx: &egui::Context) {
-        if self.state.busy || self.state.config.is_none() {
+        if self.state.busy || self.state.refresh_in_flight || self.state.config.is_none() {
             return;
         }
         let visible = ctx.input(|input| input.viewport().visible().unwrap_or(true));
@@ -254,7 +270,7 @@ impl BridgeApp {
             Duration::from_secs(20)
         };
         if self.state.last_poll.elapsed() >= interval {
-            self.spawn_refresh(ctx.clone());
+            self.spawn_refresh(ctx.clone(), false);
         }
         ctx.request_repaint_after(interval);
     }
@@ -311,7 +327,7 @@ impl eframe::App for BridgeApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         match main_view::show(ui, &mut self.state) {
             ViewAction::None => {}
-            ViewAction::Refresh => self.spawn_refresh(ui.ctx().clone()),
+            ViewAction::Refresh => self.spawn_refresh(ui.ctx().clone(), true),
             ViewAction::OpenSettings => self.state.show_settings = true,
             ViewAction::OpenLogs => self.state.show_logs = true,
             ViewAction::Connect(devices) => self.spawn_connect(ui.ctx().clone(), devices),
